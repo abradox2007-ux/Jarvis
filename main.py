@@ -76,10 +76,13 @@ def main() -> None:
 
     continuous_conversation = config.get("continuous_conversation", True)
     follow_up_timeout = float(config.get("follow_up_timeout", 8.0))
+    active_on_startup = bool(config.get("active_on_startup", True))
 
-    greeting = "Jarvis is ready. Say Hey Jarvis followed by your command."
+    greeting = "Jarvis is ready. How can I help you?" if active_on_startup else "Jarvis is ready. Say Hey Jarvis followed by your command."
     speak(greeting)
     set_status("idle", greeting)
+
+    first_startup = active_on_startup
 
     try:
         while True:
@@ -89,18 +92,29 @@ def main() -> None:
                 while get_status_phase() == "diary_manual":
                     time.sleep(0.2)
 
-                # ── Phase 1: Wait for wake word ──────────────────────────
-                set_status("waiting", "Waiting for wake word... say \"Hey Jarvis\"")
-                _, inline_command = listener.wait_for_wake_word()
-
-                # ── Phase 2: Capture initial command ─────────────────────
-                if inline_command:
-                    command = inline_command
-                    logger.info("Executing inline command directly: '%s'", command)
-                else:
-                    speak("Yes?")
+                command = None
+                if first_startup:
+                    first_startup = False
                     set_status("listening", "Listening... speak your command now")
                     command = listener.capture_command(timeout=LISTEN_TIMEOUT)
+                else:
+                    # ── Phase 1: Wait for wake word ──────────────────────────
+                    set_status("waiting", "Waiting for wake word... say \"Hey Jarvis\"")
+                    _, inline_command = listener.wait_for_wake_word()
+
+                    # ── Phase 2: Capture initial command ─────────────────────
+                    if inline_command:
+                        command = inline_command
+                        logger.info("Executing inline command directly: '%s'", command)
+                    else:
+                        if sys.platform == "win32":
+                            try:
+                                import winsound
+                                winsound.Beep(1046, 120)
+                            except Exception:
+                                pass
+                        set_status("listening", "Listening... speak your command now")
+                        command = listener.capture_command(timeout=LISTEN_TIMEOUT)
 
                 # ── Phase 3: Route initial command ───────────────────────
                 if command:

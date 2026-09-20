@@ -1,12 +1,15 @@
-"""jarvis/speech.py — Thread-safe, single-threaded queued text-to-speech engine."""
-
-from __future__ import annotations
-
+import asyncio
+import ctypes
+import logging
 import os
 import queue
 import subprocess
+import sys
+import tempfile
 import threading
 import pyttsx3
+
+logger = logging.getLogger(__name__)
 
 # Thread-safe queue to pass text and done events to the TTS thread
 _speech_queue: queue.Queue[tuple[str, threading.Event | None] | None] = queue.Queue()
@@ -19,8 +22,54 @@ def is_speaking() -> bool:
     return _speaking_event.is_set()
 
 
+def _play_audio_file_native(filepath: str) -> bool:
+    """Play an audio file (.mp3 / .wav) synchronously using native Windows MCI."""
+    if sys.platform == "win32":
+        import time
+        alias = f"jarvis_tts_{os.getpid()}_{time.time_ns()}"
+        winmm = ctypes.windll.winmm
+        clean_path = os.path.normpath(filepath)
+        try:
+            res = winmm.mciSendStringW(f'open "{clean_path}" type mpegvideo alias {alias}', None, 0, None)
+            if res == 0:
+                try:
+                    winmm.mciSendStringW(f'play {alias} wait', None, 0, None)
+                    return True
+                finally:
+                    winmm.mciSendStringW(f'close {alias}', None, 0, None)
+            else:
+                logger.warning("Native MCI open returned error code %d", res)
+        except Exception as e:
+            logger.warning("Native MCI audio playback failed: %s", e)
+    return False
+
+
+def _synthesize_edge_tts(text: str, voice: str, outfile: str) -> bool:
+    """Synthesize speech using Microsoft Edge-TTS with bounded timeout."""
+    try:
+        import edge_tts
+
+        async def _run():
+            communicate = edge_tts.Communicate(text, voice)
+            await communicate.save(outfile)
+
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(asyncio.wait_for(_run(), timeout=6.0))
+            loop.close()
+        except Exception as e:
+            logger.warning("Edge-TTS timed out or connection failed: %s", e)
+            return False
+
+        return os.path.exists(outfile) and os.path.getsize(outfile) > 0
+    except Exception as exc:
+        logger.warning("Edge-TTS synthesis error: %s", exc)
+        return False
+
+
 def _tts_worker() -> None:
-    """Dedicated background thread to handle SAPI/Piper initialization and speech tasks sequentially."""
+    """Dedicated background thread to handle TTS tasks sequentially."""
     try:
         import comtypes
         comtypes.CoInitialize()
@@ -34,7 +83,8 @@ def _tts_worker() -> None:
     except Exception:
         config = {}
 
-    tts_engine = config.get("tts_engine", "google").lower()
+    tts_engine = config.get("tts_engine", "edge-tts").lower()
+    edge_voice = config.get("edge_tts_voice", "en-US-GuyNeural")
     piper_path = config.get("piper_path")
     piper_model = config.get("piper_model")
 
@@ -66,8 +116,25 @@ def _tts_worker() -> None:
         _speaking_event.set()
 
         try:
-            spoken_via_piper = False
-            if tts_engine == "piper" and p_audio is not None and pyaudio is not None and piper_path and piper_model:
+            spoken = False
+
+            # 1. Try Edge-TTS (High Quality Neural Cloud Voice)
+            if tts_engine in ("edge-tts", "edge_tts", "edge") and not spoken:
+                with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tf:
+                    temp_mp3 = tf.name
+                try:
+                    if _synthesize_edge_tts(text, edge_voice, temp_mp3):
+                        if _play_audio_file_native(temp_mp3):
+                            spoken = True
+                finally:
+                    if os.path.exists(temp_mp3):
+                        try:
+                            os.remove(temp_mp3)
+                        except Exception:
+                            pass
+
+            # 2. Try Piper (Local Neural Offline Voice)
+            if not spoken and tts_engine == "piper" and p_audio is not None and pyaudio is not None and piper_path and piper_model:
                 if os.path.exists(piper_path) and os.path.exists(piper_model):
                     try:
                         command = [
@@ -93,17 +160,17 @@ def _tts_worker() -> None:
                             stream.write(audio_data)
                             stream.stop_stream()
                             stream.close()
-                            spoken_via_piper = True
+                            spoken = True
                     except Exception as exc:
                         print(f"[speech] Piper error: {exc}. Falling back to pyttsx3.")
 
-            if not spoken_via_piper and engine is not None:
+            # 3. Fallback to pyttsx3 (SAPI5 on Windows)
+            if not spoken and engine is not None:
                 try:
                     engine.say(text)
                     engine.runAndWait()
                 except Exception as exc:
                     print(f"[speech] SAPI runtime error: {exc}")
-                    # Try to recreate the engine instance on error
                     try:
                         engine = pyttsx3.init()
                         engine.setProperty("rate", 170)

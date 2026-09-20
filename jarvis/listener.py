@@ -306,9 +306,9 @@ class Listener:
                 chunk = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
                 prob1 = self._vad.get_speech_probability(chunk[:512])
                 prob2 = self._vad.get_speech_probability(chunk[512:])
-                is_speech_chunk = (prob1 >= self._vad_threshold) or (prob2 >= self._vad_threshold) or (chunk_rms > 50.0)
+                is_speech_chunk = (prob1 >= self._vad_threshold) or (prob2 >= self._vad_threshold) or (chunk_rms > 25.0)
             else:
-                is_speech_chunk = chunk_rms > 45.0
+                is_speech_chunk = chunk_rms > 20.0
 
             if is_speech_chunk:
                 if not speech_started:
@@ -331,7 +331,7 @@ class Listener:
         total_duration = len(total_audio) / (16000 * 2)  # 16kHz, 16-bit mono = 32000 bytes/sec
         total_rms = self._compute_rms(total_audio)
 
-        if total_duration >= 0.25 and (speech_started or total_rms > 40.0):
+        if total_duration >= 0.25 and (speech_started or total_rms > 15.0):
             return sr.AudioData(total_audio, 16000, 2)
 
         logger.debug("Captured audio too short or silent (duration: %.2fs, RMS: %.1f).", total_duration, total_rms)
