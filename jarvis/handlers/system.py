@@ -121,20 +121,57 @@ def set_brightness(percent: int) -> str:
 
 
 def take_screenshot(target_dir: str = "./data/screenshots") -> str:
-    """Capture full screen and save as PNG image."""
+    """Capture full screen and save as PNG image using native Windows GDI / PIL."""
+    os.makedirs(target_dir, exist_ok=True)
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    filepath = os.path.join(target_dir, f"screenshot_{timestamp}.png")
+
+    # 1. Try high-performance Windows GDI BitBlt
+    if sys.platform == "win32":
+        try:
+            import struct
+            from PIL import Image
+            user32 = ctypes.windll.user32
+            gdi32 = ctypes.windll.gdi32
+            try:
+                user32.SetProcessDPIAware()
+            except Exception:
+                pass
+
+            w = user32.GetSystemMetrics(0)
+            h = user32.GetSystemMetrics(1)
+            hdc_screen = user32.GetDC(0)
+            hdc_mem = gdi32.CreateCompatibleDC(hdc_screen)
+            hbm = gdi32.CreateCompatibleBitmap(hdc_screen, w, h)
+            gdi32.SelectObject(hdc_mem, hbm)
+            gdi32.BitBlt(hdc_mem, 0, 0, w, h, hdc_screen, 0, 0, 0x00CC0020)
+
+            bi = bytearray(40)
+            struct.pack_into('<LllHHLLLLLL', bi, 0, 40, w, -h, 1, 32, 0, 0, 0, 0, 0, 0)
+            raw = bytearray(w * h * 4)
+            gdi32.GetDIBits(hdc_mem, hbm, 0, h, (ctypes.c_char * len(raw)).from_buffer(raw), (ctypes.c_char * 40).from_buffer(bi), 0)
+
+            img = Image.frombuffer('RGBA', (w, h), raw, 'raw', 'BGRA', 0, 1).convert('RGB')
+            img.save(filepath, "PNG")
+
+            gdi32.DeleteObject(hbm)
+            gdi32.DeleteDC(hdc_mem)
+            user32.ReleaseDC(0, hdc_screen)
+            logger.info("Saved GDI screenshot to %s", filepath)
+            return "Screenshot saved successfully."
+        except Exception as e:
+            logger.debug("Native GDI screenshot failed: %s. Trying PIL fallback.", e)
+
+    # 2. Try PIL ImageGrab
     try:
         from PIL import ImageGrab
-        os.makedirs(target_dir, exist_ok=True)
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        filepath = os.path.join(target_dir, f"screenshot_{timestamp}.png")
-        
-        screenshot = ImageGrab.grab()
+        screenshot = ImageGrab.grab(all_screens=True)
         screenshot.save(filepath, "PNG")
-        logger.info("Saved screenshot to %s", filepath)
-        return f"Screenshot saved successfully."
-    except Exception as e:
-        logger.warning("Failed to capture screenshot: %s", e)
-        return f"Failed to take screenshot: {e}"
+        logger.info("Saved PIL screenshot to %s", filepath)
+        return "Screenshot saved successfully."
+    except Exception as exc:
+        logger.warning("Failed to capture screenshot: %s", exc)
+        return f"Failed to take screenshot: {exc}"
 
 
 def get_battery_status() -> str:

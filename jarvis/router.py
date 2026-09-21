@@ -35,6 +35,11 @@ def is_dismissal(command: str) -> bool:
     if not command:
         return False
     cmd = command.strip().lower().rstrip(".!?,")
+
+    # Exclude specific targeted controls from accidental dismissal
+    if cmd in ("stop music", "stop media", "stop song", "stop playback", "stop timer", "stop timers", "cancel timer", "cancel timers"):
+        return False
+
     if cmd in DISMISSAL_PHRASES:
         return True
     prefixes = (
