@@ -16,6 +16,7 @@ _state: dict = {
     "updated_at": time.time(),
 }
 _history: deque = deque(maxlen=50)   # most-recent 50 commands
+_standby_requested: bool = False
 
 _devices: dict = {
     "light": {"name": "Living Room Light", "state": "off"},
@@ -26,6 +27,29 @@ _router = None
 
 
 # ── Public helpers (called from main.py / router.py) ──────────────────────────
+
+def request_standby() -> None:
+    global _standby_requested
+    with _lock:
+        _standby_requested = True
+        _state["phase"] = "waiting"
+        _state["message"] = "Standing by. Say \"Hey Jarvis\" when ready."
+        _state["updated_at"] = time.time()
+
+
+def is_standby_requested() -> bool:
+    global _standby_requested
+    with _lock:
+        return _standby_requested
+
+
+def check_and_clear_standby() -> bool:
+    global _standby_requested
+    with _lock:
+        req = _standby_requested
+        _standby_requested = False
+        return req
+
 
 def set_router(router) -> None:
     global _router
@@ -143,6 +167,18 @@ def api_post_command():
         set_status("error", err_msg)
         add_history(command, err_msg, ok=False)
         return jsonify({"success": False, "response": err_msg}), 500
+
+
+@app.route("/api/standby", methods=["POST"])
+@app.route("/api/stop", methods=["POST"])
+def api_standby():
+    request_standby()
+    from jarvis.speech import speak
+    try:
+        speak("Going on standby. Say Hey Jarvis when you need me.", block=False)
+    except Exception:
+        pass
+    return jsonify({"success": True, "message": "Jarvis put on standby."})
 
 
 # ── Diary APIs ────────────────────────────────────────────────────────────────

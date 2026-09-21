@@ -2,12 +2,21 @@
   "gemini_api_key": "YOUR_GEMINI_API_KEY_HERE",
   "stt_engine": "whisper",
   "whisper_model": "base",
-  "tts_engine": "piper",
+  "tts_engine": "edge-tts",
+  "edge_tts_voice": "en-US-GuyNeural",
+  "piper_path": "bin/piper/piper.exe",
+  "piper_model": "bin/piper/en_US-lessac-medium.onnx",
   "wake_word_engine": "openwakeword",
   "wake_word_model": "hey_jarvis",
-  "wake_word_threshold": 0.38,
+  "wake_word_threshold": 0.22,
+  "active_on_startup": true,
+  "vad_engine": "silero",
+  "vad_threshold": 0.15,
+  "vad_initial_timeout": 7.0,
   "continuous_conversation": true,
   "follow_up_timeout": 8.0,
+  "conversation_memory_turns": 10,
+  "plugins_dir": "./plugins",
   "search_paths": [
     "~/Desktop",
     "~/Documents",
@@ -16,10 +25,23 @@
   "url_aliases": {
     "google": "https://www.google.com",
     "youtube": "https://www.youtube.com",
+    "facebook": "https://www.facebook.com",
+    "instagram": "https://www.instagram.com",
+    "chatgpt": "https://chatgpt.com",
     "github": "https://github.com",
     "gmail": "https://mail.google.com",
+    "reddit": "https://www.reddit.com",
+    "wikipedia": "https://www.wikipedia.org",
+    "amazon": "https://www.amazon.com",
+    "whatsapp": "https://www.whatsapp.com",
+    "netflix": "https://www.netflix.com",
+    "twitter": "https://twitter.com",
+    "linkedin": "https://www.linkedin.com",
+    "coursera": "https://www.coursera.org",
     "stackoverflow": "https://stackoverflow.com",
-    "wikipedia": "https://www.wikipedia.org"
+    "udemy": "https://www.udemy.com",
+    "w3schools": "https://www.w3schools.com",
+    "leetcode": "https://leetcode.com"
   },
   "app_aliases": {
     "notepad": "notepad.exe",
@@ -33,5 +55,11 @@
     "file explorer": "explorer.exe"
   },
   "weather_city": "Chennai",
-  "weather_country": "IN"
+  "weather_country": "IN",
+  "custom_commands_enabled": true,
+  "custom_commands_file": "data/custom_commands.txt",
+  "allow_custom_shell_commands": true,
+  "custom_command_passkey": "1312",
+  "require_passkey_for_all_shell_cmds": true,
+  "shell_command_timeout_seconds": 8
 }

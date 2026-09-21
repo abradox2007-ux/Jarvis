@@ -134,8 +134,19 @@ def main() -> None:
                 if continuous_conversation:
                     logger.info("Entering continuous conversation mode (active until 'stop')...")
                     while True:
+                        from server import check_and_clear_standby, is_standby_requested
+                        if check_and_clear_standby() or is_standby_requested():
+                            logger.info("Standby requested via Web UI.")
+                            set_status("idle", 'Standing by. Say "Hey Jarvis" when ready.')
+                            break
+
                         set_status("listening", "Listening... (say 'stop' to standby)")
                         follow_up = listener.capture_command(timeout=LISTEN_TIMEOUT)
+
+                        if check_and_clear_standby() or is_standby_requested():
+                            logger.info("Standby requested via Web UI during capture.")
+                            set_status("idle", 'Standing by. Say "Hey Jarvis" when ready.')
+                            break
 
                         if not follow_up:
                             # Silence timeout on this chunk: remain active and keep listening

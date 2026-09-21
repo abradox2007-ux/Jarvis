@@ -25,16 +25,14 @@ def parse_time_duration(text: str) -> Optional[tuple[int, str]]:
       - "remind me to call John in 1 hour and 30 minutes" -> (5400, "call John")
       - "set a 10 second timer" -> (10, "Timer for 10 seconds")
     """
-    text_clean = text.lower().strip()
-    
     # Extract reminder label if present (e.g. "remind me to <label> in <time>")
-    label = "Timer"
-    remind_match = re.search(r"remind (?:me )?(?:to )?(.+?)\s+(?:in|after)\s+(.+)", text_clean)
+    remind_match = re.search(r"remind\s+(?:me\s+)?(?:to\s+)?(.+?)\s+(?:in|after)\s+(.+)", text, re.IGNORECASE)
     if remind_match:
         label = remind_match.group(1).strip()
-        time_part = remind_match.group(2).strip()
+        time_part = remind_match.group(2).strip().lower()
     else:
-        time_part = text_clean
+        label = "Timer"
+        time_part = text.strip().lower()
 
     total_seconds = 0
     found_any = False
@@ -59,7 +57,7 @@ def parse_time_duration(text: str) -> Optional[tuple[int, str]]:
 
     # Standalone number assuming minutes if no units found but "timer for 5"
     if not found_any:
-        simple_match = re.search(r"(?:timer|remind me).*?\s+(\d+)\s*$", text_clean)
+        simple_match = re.search(r"(?:timer|remind me).*?\s+(\d+)\s*$", text.strip().lower())
         if simple_match:
             total_seconds = int(simple_match.group(1)) * 60
             found_any = True
@@ -139,14 +137,28 @@ def get_active_timers() -> list[dict]:
         return sorted(result, key=lambda x: x["remaining"])
 
 
+def list_timers() -> str:
+    """Return a speech-friendly summary of all running timers."""
+    timers = get_active_timers()
+    if not timers:
+        return "You have no active timers."
+    if len(timers) == 1:
+        t = timers[0]
+        rem = t["remaining"]
+        rem_str = f"{rem // 60} minutes and {rem % 60} seconds" if rem >= 60 else f"{rem} seconds"
+        return f"You have 1 active timer for {t['label']} with {rem_str} remaining."
+    summary = [f"{t['label']} with {t['remaining']}s left" for t in timers]
+    return f"You have {len(timers)} active timers: " + ", ".join(summary)
+
+
 def cancel_all_timers() -> str:
     """Cancel all running timers."""
     with _timer_lock:
         count = len(_active_timers)
-        for data in _active_timers.values():
+        for data in list(_active_timers.values()):
             try:
                 data["thread"].cancel()
             except Exception:
                 pass
         _active_timers.clear()
-    return f"Cancelled {count} active timer(s)." if count > 0 else "No active timers to cancel."
+        return f"Cancelled {count} active timer(s)." if count > 0 else "No active timers to cancel."

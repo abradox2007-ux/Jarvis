@@ -135,3 +135,27 @@ def take_screenshot(target_dir: str = "./data/screenshots") -> str:
     except Exception as e:
         logger.warning("Failed to capture screenshot: %s", e)
         return f"Failed to take screenshot: {e}"
+
+
+def get_battery_status() -> str:
+    """Retrieve system battery percentage and charging state."""
+    try:
+        import psutil
+        battery = psutil.sensors_battery()
+        if battery:
+            plugged = "plugged in" if battery.power_plugged else "on battery"
+            return f"Battery is at {battery.percent:.0f} percent and {plugged}."
+    except Exception:
+        pass
+
+    if sys.platform == "win32":
+        try:
+            cmd = "Get-CimInstance -ClassName Win32_Battery | Select-Object -ExpandProperty EstimatedChargeRemaining"
+            proc = subprocess.run(["powershell", "-NoProfile", "-Command", cmd], capture_output=True, text=True, timeout=3)
+            val = proc.stdout.strip()
+            if val and val.isdigit():
+                return f"Battery is at {val} percent."
+        except Exception as e:
+            logger.debug("PowerShell battery query failed: %s", e)
+
+    return "Battery information is not available."

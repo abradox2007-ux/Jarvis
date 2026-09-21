@@ -6,7 +6,9 @@ import logging
 import os
 import re
 
-from jarvis.handlers import apps, diary, files, info, urls, ai
+from jarvis.handlers import apps, diary, files, info, urls, ai, system, timer
+from jarvis.handlers.custom_commands import CustomCommandManager
+from jarvis.plugin_manager import PluginManager
 
 logger = logging.getLogger(__name__)
 
@@ -217,6 +219,8 @@ class CommandRouter:
         self._search_paths: list[str] = config.get("search_paths", [])
         self._weather_city: str = config.get("weather_city", "Chennai")
         self._weather_country: str = config.get("weather_country", "IN")
+        self._custom_mgr = CustomCommandManager(config)
+        self._plugin_mgr = PluginManager(config.get("plugins_dir", "./plugins"))
 
     def route(self, command: str) -> str:
         """Dispatch *command* to the appropriate handler and return a response."""
@@ -238,6 +242,18 @@ class CommandRouter:
 
     def _route_single(self, command: str) -> str:
         """Dispatch a single atomic command to the appropriate handler."""
+        # ── Check Pending Passkey Authorization ──────────────────────────────
+        if self._custom_mgr.authenticator.has_pending():
+            pending_cmd = self._custom_mgr.authenticator.get_pending()
+            if self._custom_mgr.authenticator.verify_input(command):
+                self._custom_mgr.authenticator.clear_pending()
+                if pending_cmd:
+                    return self._custom_mgr.execute_command(pending_cmd)
+                return "Authorization granted."
+            else:
+                self._custom_mgr.authenticator.clear_pending()
+                return "Passkey authorization failed. Command cancelled."
+
         translated_command = translate_tamil_to_english(command)
         cmd = translated_command.strip().lower()
         cmd = cmd.replace("dairy", "diary")
@@ -252,6 +268,101 @@ class CommandRouter:
             if any(w in cmd for w in ("thank", "thanks", "நன்றி")):
                 return "You're very welcome. Standing by."
             return "Going on standby. Say Hey Jarvis when you need me."
+
+        # ── Live Custom Commands ─────────────────────────────────────────────
+        matched_custom = self._custom_mgr.find_matching_command(command) or self._custom_mgr.find_matching_command(translated_command)
+        if matched_custom:
+            custom_cmd, _ = matched_custom
+            needs_auth = custom_cmd.is_secure or (
+                custom_cmd.action_type in ("cmd", "shell") and self._custom_mgr.require_passkey_shell
+            )
+            if needs_auth:
+                _, is_auth = self._custom_mgr.authenticator.extract_inline_passkey(command)
+                if is_auth:
+                    return self._custom_mgr.execute_command(custom_cmd)
+                else:
+                    self._custom_mgr.authenticator.set_pending(custom_cmd)
+                    return "Passkey required. Please state your authorization code."
+            else:
+                return self._custom_mgr.execute_command(custom_cmd)
+
+        # ── Dynamic Plugins Engine ───────────────────────────────────────────
+        plugin_res = self._plugin_mgr.dispatch(command, self._config) or self._plugin_mgr.dispatch(translated_command, self._config)
+        if plugin_res is not None:
+            return plugin_res
+
+        # ── System Controls (Volume, Media, Workstation) ─────────────────────
+        if cmd in ("mute volume", "unmute volume", "toggle mute"):
+            return system.mute_volume()
+        if any(cmd == p or cmd.startswith(p + " ") for p in ("volume up", "increase volume", "louder", "turn it up")):
+            return system.volume_up()
+        if any(cmd == p or cmd.startswith(p + " ") for p in ("volume down", "decrease volume", "lower volume", "quieter", "turn it down")):
+            return system.volume_down()
+        vol_match = re.search(r"(?:set\s+)?volume\s+(?:to\s+)?(\d+)(?:\s*%)?", cmd)
+        if vol_match:
+            return system.set_volume_percent(int(vol_match.group(1)))
+
+        if cmd in ("pause", "resume", "pause music", "resume music", "play pause", "media play", "media pause"):
+            return system.media_play_pause()
+        if cmd in ("next track", "next song", "skip track", "skip song"):
+            return system.media_next()
+        if cmd in ("previous track", "previous song", "prev track", "prev song"):
+            return system.media_previous()
+        if cmd in ("stop music", "media stop"):
+            return system.media_stop()
+
+        if cmd in ("lock workstation", "lock screen", "lock computer", "lock pc", "lock windows"):
+            return system.lock_workstation()
+        if cmd in ("screenshot", "take screenshot", "capture screen", "take a screenshot"):
+            return system.take_screenshot()
+        if cmd in ("battery", "battery status", "battery level", "check battery", "power status"):
+            return system.get_battery_status()
+
+        # ── Timers & Reminders ───────────────────────────────────────────────
+        if any(cmd.startswith(p) for p in ("timer", "set timer", "set a timer", "remind me", "countdown")):
+            parsed = timer.parse_time_duration(command) or timer.parse_time_duration(translated_command)
+            if parsed:
+                secs, label = parsed
+                return timer.create_timer(secs, label)
+        if cmd in ("list timers", "show timers", "active timers", "check timers"):
+            return timer.list_timers()
+        if cmd in ("cancel timer", "stop timer", "cancel all timers", "clear timers"):
+            return timer.cancel_all_timers()
+
+        # ── Add / Teach Custom Command by Voice ──────────────────────────────
+        add_cmd_match = re.match(
+            r"^(?:add|create|new|teach|save)\s+(?:custom\s+)?command\s+(?:when\s+i\s+say\s+|trigger\s+)?['\"]?(.+?)['\"]?\s+(?:to\s+|=>\s*)?(say|tell|open url|open website|open app|open folder|open file|open|launch|run|cmd|say:)\s+['\"]?(.+?)['\"]?$",
+            translated_command,
+            re.IGNORECASE
+        )
+        if add_cmd_match:
+            trigger_phrase = add_cmd_match.group(1).strip()
+            act_verb = add_cmd_match.group(2).strip().lower().rstrip(":")
+            act_target = add_cmd_match.group(3).strip()
+
+            if act_verb in ("say", "tell"):
+                atype = "say"
+            elif act_verb in ("open url", "open website"):
+                atype = "url"
+            elif act_verb in ("open app", "launch"):
+                atype = "app"
+            elif act_verb in ("open folder",):
+                atype = "folder"
+            elif act_verb in ("open file",):
+                atype = "file"
+            elif act_verb in ("run", "cmd"):
+                atype = "cmd"
+            elif act_verb == "open":
+                if act_target.startswith("http://") or act_target.startswith("https://") or act_target.startswith("www."):
+                    atype = "url"
+                elif "." in act_target and ("/" in act_target or "\\" in act_target):
+                    atype = "file"
+                else:
+                    atype = "app"
+            else:
+                atype = "say"
+
+            return self._custom_mgr.add_custom_command(trigger_phrase, atype, act_target)
 
         # ── Help ─────────────────────────────────────────────────────────────
         if cmd in ("help", "what can you do", "commands"):
@@ -608,6 +719,14 @@ class CommandRouter:
             src_f = action_dict.get("source") or action_dict.get("old_name") or action_dict.get("file", "")
             dst_f = action_dict.get("destination") or action_dict.get("new_name") or action_dict.get("target", "")
             return files.move_file(src_f, dst_f, self._search_paths)
+
+        # 8.4 Add / Create Custom Command
+        elif action in ("add_custom_command", "create_custom_command"):
+            trig = action_dict.get("trigger", "")
+            atype = action_dict.get("type", "say")
+            targ = action_dict.get("target", "")
+            sec = bool(action_dict.get("secure", False))
+            return self._custom_mgr.add_custom_command(trig, atype, targ, sec)
 
         # 9. Time/Date/Weather info fallback
         elif action == "tell_time":

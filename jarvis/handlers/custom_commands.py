@@ -381,3 +381,38 @@ class CustomCommandManager:
             return output_msg
 
         return f"Unknown action type '{act}' for target '{target}'."
+
+    def add_custom_command(self, trigger: str, action_type: str, target: str, is_secure: bool = False) -> str:
+        """Dynamically append a new custom command to the configuration file."""
+        trigger_clean = trigger.strip().strip("'\"")
+        action_clean = action_type.strip().lower()
+        target_clean = target.strip().strip("'\"")
+
+        if not trigger_clean or not target_clean:
+            return "Please provide both a trigger phrase and an action target."
+
+        valid_types = {"url", "app", "folder", "file", "say", "cmd", "shell", "text"}
+        if action_clean not in valid_types:
+            if target_clean.startswith("http://") or target_clean.startswith("https://") or target_clean.startswith("www."):
+                action_clean = "url"
+            else:
+                action_clean = "say"
+
+        if action_clean == "text":
+            action_clean = "say"
+        elif action_clean == "shell":
+            action_clean = "cmd"
+
+        line = f"{'[secure] ' if is_secure else ''}{trigger_clean} => {action_clean}: {target_clean}\n"
+
+        try:
+            os.makedirs(os.path.dirname(os.path.abspath(self.commands_file)), exist_ok=True)
+            with open(self.commands_file, "a", encoding="utf-8") as f:
+                f.write(line)
+            self._load_commands()
+            self._last_mtime = os.path.getmtime(self.commands_file)
+            return f"Successfully added custom command for '{trigger_clean}'. It is active now."
+        except Exception as e:
+            logger.error("Failed to append custom command: %s", e)
+            return f"Could not save custom command: {e}"
+

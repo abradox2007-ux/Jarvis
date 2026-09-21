@@ -50,14 +50,17 @@ graph TD
         Handlers -->|Media / Web| H_Urls["URL & YouTube Handler (urls.py)"]
         Handlers -->|Notes / Files| H_Files["File Manager (files.py)"]
         Handlers -->|Journal| H_Diary["Voice Diary (diary.py)"]
-        Handlers -->|Info / Weather| H_Info["System & Weather (info.py)"]
+        Handlers -->|Info / Weather| H_Info["Time, Date & Weather (info.py)"]
+        Handlers -->|System / OS| H_Sys["System & Audio Controls (system.py)"]
+        Handlers -->|Timers / Alarms| H_Timer["Timers & Reminders (timer.py)"]
         Handlers -->|Custom Script| H_Custom["Safe Custom Cmd (custom_commands.py)"]
+        Handlers -->|Plugins| H_Plugins["Plugin Dispatcher (plugin_manager.py)"]
         Handlers -->|Complex / Fallback| H_AI["Gemini LLM Function Calling (ai.py)"]
     end
 
     subgraph Output_Presentation ["Output & Interfaces"]
         Router --> TTSQueue["Thread-Safe Speech Queue (jarvis/speech.py)"]
-        TTSQueue --> TTSWorker["TTS Worker (Piper Neural / pyttsx3 SAPI5)"]
+        TTSQueue --> TTSWorker["TTS Worker (Edge-TTS / Piper Neural / pyttsx3 SAPI5)"]
         TTSWorker --> AudioOut["Speaker Output"]
 
         Router --> FlaskServer["Flask Bridge Server (server.py :5050)"]
@@ -68,6 +71,7 @@ graph TD
         H_Diary <--> DataDiary[("data/diary.json")]
         H_Files <--> DataFiles[("data/ & User Directories")]
         H_Custom <--> DataCustom[("data/custom_commands.txt")]
+        H_Plugins <--> PluginsDir[("plugins/*.py")]
         FlaskServer <--> Config[("config.json")]
     end
 ```
@@ -244,8 +248,9 @@ AC_VoiceAssistant/
 │   ├── __init__.py              # Package initialization
 │   ├── listener.py              # Audio capture, bandpass filtering, wake word & STT
 │   ├── router.py                # Command routing, Tamil normalization, & intent parsing
-│   ├── speech.py                # Single-threaded, queued TTS engine (Piper / pyttsx3)
+│   ├── speech.py                # Multi-engine queued TTS worker (Edge-TTS / Piper / pyttsx3)
 │   ├── vad.py                   # Silero Voice Activity Detector (ONNX runtime wrapper)
+│   ├── plugin_manager.py        # Dynamic external plugin loader and dispatcher
 │   ├── utils.py                 # Configuration loader and centralized logging setup
 │   │
 │   └── handlers/                # Modular Feature Handlers
@@ -256,7 +261,12 @@ AC_VoiceAssistant/
 │       ├── diary.py             # Voice diary manager (CRUD operations on JSON storage)
 │       ├── files.py             # Local filesystem manager (search, read, write, rename, copy, move)
 │       ├── info.py              # System info, time, date, & Open-Meteo weather handler
+│       ├── system.py            # Windows OS volume, media, screenshot & screen lock
+│       ├── timer.py             # Non-blocking countdown timers & voice reminders
 │       └── urls.py              # Web browser launcher, Google search, & YouTube playback
+│
+├── plugins/                     # Extensible External Python Plugins
+│   └── ip_plugin.py             # Local & public IP query plugin
 │
 ├── data/                        # Local Persistent Data Directory
 │   ├── diary.json               # Timestamped voice diary log entries

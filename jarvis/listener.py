@@ -287,6 +287,14 @@ class Listener:
                         speech_started = True
 
         while self._running:
+            try:
+                from server import is_standby_requested
+                if is_standby_requested():
+                    logger.info("Standby requested, aborting active speech capture.")
+                    return None
+            except Exception:
+                pass
+
             if time.time() - start_time > max_duration:
                 logger.debug("Reached max command duration limit (%.1fs).", max_duration)
                 break

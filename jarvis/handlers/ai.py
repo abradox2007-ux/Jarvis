@@ -34,6 +34,8 @@ SYSTEM_INSTRUCTION = (
     '   {"action": "search_google", "query": "search query"}\n'
     "7. To read the diary:\n"
     '   {"action": "read_diary"}\n'
+    "8. To create or teach a new custom voice command shortcut:\n"
+    '   {"action": "add_custom_command", "trigger": "voice phrase trigger", "type": "say"|"url"|"app"|"folder"|"file"|"cmd", "target": "action target or reply", "secure": false}\n'
     "9. To write or take notes in a specific named file:\n"
     '   {"action": "write_file", "file": "filename", "text": "notes/content to write"}\n'
     "10. To rename an existing file:\n"

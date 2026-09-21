@@ -1,5 +1,8 @@
 import numpy as np
-import onnxruntime as ort
+try:
+    import onnxruntime as ort
+except ImportError:
+    ort = None
 
 class SileroVAD:
     """
@@ -7,6 +10,8 @@ class SileroVAD:
     using onnxruntime and numpy.
     """
     def __init__(self, model_path: str):
+        if ort is None:
+            raise ImportError("onnxruntime is required for SileroVAD but not installed.")
         # Configure onnxruntime session for single-threaded CPU execution (maximum efficiency)
         opts = ort.SessionOptions()
         opts.intra_op_num_threads = 1

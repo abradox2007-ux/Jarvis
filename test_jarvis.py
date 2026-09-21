@@ -428,6 +428,192 @@ class ServerTests(unittest.TestCase):
         mock_speak.assert_any_call("Delete diary entry 0", block=False)
         mock_speak.assert_any_call("Diary entry deleted successfully.", block=False)
 
+    @patch("jarvis.speech.speak")
+    def test_api_standby(self, mock_speak) -> None:
+        from server import is_standby_requested
+        response = self.app.post("/api/standby")
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json["success"])
+        self.assertTrue(is_standby_requested())
+        mock_speak.assert_called_once_with("Going on standby. Say Hey Jarvis when you need me.", block=False)
+
+
+class SystemHandlerTests(unittest.TestCase):
+    @patch("jarvis.handlers.system._send_virtual_key")
+    def test_volume_and_media_controls(self, mock_key) -> None:
+        from jarvis.handlers import system
+        
+        res = system.mute_volume()
+        self.assertIn("mute", res.lower())
+        self.assertTrue(mock_key.called)
+        
+        mock_key.reset_mock()
+        res = system.volume_up(3)
+        self.assertIn("increased volume", res.lower())
+        self.assertEqual(mock_key.call_count, 3)
+
+        mock_key.reset_mock()
+        res = system.volume_down(2)
+        self.assertIn("decreased volume", res.lower())
+        self.assertEqual(mock_key.call_count, 2)
+
+        mock_key.reset_mock()
+        res = system.set_volume_percent(50)
+        self.assertIn("50 percent", res.lower())
+
+        mock_key.reset_mock()
+        res = system.media_play_pause()
+        self.assertIn("media", res.lower())
+
+        res = system.media_next()
+        self.assertIn("next", res.lower())
+
+        res = system.media_previous()
+        self.assertIn("previous", res.lower())
+
+        res = system.media_stop()
+        self.assertIn("stopped", res.lower())
+
+    @patch("ctypes.windll.user32.LockWorkStation", create=True)
+    def test_lock_workstation(self, mock_lock) -> None:
+        from jarvis.handlers import system
+        res = system.lock_workstation()
+        self.assertIn("workstation", res.lower())
+
+    def test_battery_status(self) -> None:
+        from jarvis.handlers import system
+        res = system.get_battery_status()
+        self.assertIsInstance(res, str)
+        self.assertTrue(len(res) > 0)
+
+
+class TimerHandlerTests(unittest.TestCase):
+    def test_parse_time_duration(self) -> None:
+        from jarvis.handlers.timer import parse_time_duration
+        
+        p1 = parse_time_duration("set a timer for 5 minutes")
+        self.assertIsNotNone(p1)
+        self.assertEqual(p1[0], 300)
+
+        p2 = parse_time_duration("timer 30 seconds")
+        self.assertIsNotNone(p2)
+        self.assertEqual(p2[0], 30)
+
+        p3 = parse_time_duration("remind me to call John in 1 hour and 30 minutes")
+        self.assertIsNotNone(p3)
+        self.assertEqual(p3[0], 5400)
+        self.assertEqual(p3[1], "call John")
+
+    def test_timer_lifecycle(self) -> None:
+        from jarvis.handlers.timer import create_timer, list_timers, cancel_all_timers
+        
+        cancel_all_timers()
+        res_create = create_timer(100, "Test Timer")
+        self.assertIn("timer set for", res_create.lower())
+
+        res_list = list_timers()
+        self.assertIn("active timer", res_list.lower())
+
+        res_cancel = cancel_all_timers()
+        self.assertIn("cancelled", res_cancel.lower())
+
+
+class CustomCommandHandlerTests(unittest.TestCase):
+    def test_safety_guard_blocks_dangerous_commands(self) -> None:
+        from jarvis.handlers.custom_commands import SafetyGuard
+        
+        safe, reason = SafetyGuard.is_safe_command("del /s /q C:\\*")
+        self.assertFalse(safe)
+
+        safe, reason = SafetyGuard.is_safe_command("rm -rf /")
+        self.assertFalse(safe)
+
+        safe, reason = SafetyGuard.is_safe_command("format D:")
+        self.assertFalse(safe)
+
+        safe, reason = SafetyGuard.is_safe_command("echo Hello World")
+        self.assertTrue(safe)
+
+    def test_passkey_authenticator(self) -> None:
+        from jarvis.handlers.custom_commands import PasskeyAuthenticator, CustomCommand
+        
+        auth = PasskeyAuthenticator(config_passkey="1312")
+        self.assertTrue(auth.verify_input("1312"))
+        self.assertTrue(auth.verify_input("my code is 1312"))
+        self.assertTrue(auth.verify_input("one three one two"))
+        self.assertFalse(auth.verify_input("9999"))
+
+        cmd = CustomCommand(["test trigger"], "say", "Hello", is_secure=True)
+        auth.set_pending(cmd)
+        self.assertTrue(auth.has_pending())
+        self.assertEqual(auth.get_pending(), cmd)
+        auth.clear_pending()
+        self.assertFalse(auth.has_pending())
+
+
+class PluginManagerTests(unittest.TestCase):
+    def test_plugin_loading_and_dispatch(self) -> None:
+        from jarvis.plugin_manager import PluginManager
+        
+        pm = PluginManager(plugins_dir="./plugins")
+        self.assertIn("ip_plugin", pm.plugins)
+        
+        res = pm.dispatch("what is my local ip", {})
+        self.assertIsNotNone(res)
+        self.assertIn("local ip", res.lower())
+
+
+class RouterExtendedTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.config = load_config()
+        cls.router = CommandRouter(cls.config)
+
+    @patch("jarvis.handlers.system._send_virtual_key")
+    def test_router_system_commands(self, mock_key) -> None:
+        res_vol = self.router.route("volume up")
+        self.assertIn("increased volume", res_vol.lower())
+
+        res_mute = self.router.route("mute volume")
+        self.assertIn("mute", res_mute.lower())
+
+        res_pause = self.router.route("pause music")
+        self.assertIn("media", res_pause.lower())
+
+    def test_router_timer_commands(self) -> None:
+        from jarvis.handlers.timer import cancel_all_timers
+        cancel_all_timers()
+        
+        res = self.router.route("set a timer for 10 minutes")
+        self.assertIn("timer set for", res.lower())
+
+        res_list = self.router.route("list timers")
+        self.assertIn("active timer", res_list.lower())
+
+        res_cancel = self.router.route("cancel all timers")
+        self.assertIn("cancelled", res_cancel.lower())
+
+    def test_router_custom_command(self) -> None:
+        res = self.router.route("my shortcut")
+        self.assertIn("Hello test!", res)
+
+    def test_router_plugin_dispatch(self) -> None:
+        res = self.router.route("what is my local ip")
+        self.assertIn("local ip", res.lower())
+
+    def test_router_voice_add_custom_command(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_cmd_file = Path(tmp) / "custom_commands.txt"
+            with patch.object(self.router._custom_mgr, "commands_file", str(tmp_cmd_file)):
+                res = self.router.route("add custom command when I say test voice trigger say Voice created successfully")
+                self.assertIn("successfully added", res.lower())
+                
+                # Test executing it immediately
+                res_exec = self.router.route("test voice trigger")
+                self.assertEqual(res_exec, "Voice created successfully")
+
 
 if __name__ == "__main__":
     unittest.main()
+
+
