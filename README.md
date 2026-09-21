@@ -6,14 +6,15 @@ An intelligent, local-first AI Voice Assistant with real-time wake word detectio
 
 ## ✨ Features
 
-- **Wake Word & VAD Detection**: Hands-free activation powered by [openWakeWord](https://github.com/dscripka/openWakeWord) and Silero VAD (via ONNX Runtime) with bilingual support (English & Tamil).
+- **Wake Word & Full-Duplex VAD**: Hands-free activation powered by [openWakeWord](https://github.com/dscripka/openWakeWord) and Silero VAD with **real-time barge-in interruption** (interrupt Jarvis mid-speech).
 - **Continuous Conversation & Dot Delimiter**: Remains active until you say *"stop"*, and supports instant multi-command execution using verbal *"dot"* separators.
 - **Fast & Accurate STT**: Dual-engine speech recognition using `faster-whisper` (CTranslate2 INT8 CPU inference) and cloud Google Speech Recognition.
-- **High-Quality Neural TTS**: Multiple speech engine options:
+- **Studio-Quality Neural TTS**: Multiple speech engine options:
+  - **Kokoro-82M ONNX** (State-of-the-art studio-grade local neural voice, <100ms TTFB)
   - **Microsoft Edge-TTS** (Ultra natural cloud neural voice)
   - **Piper TTS** (Fast offline neural voice)
   - **pyttsx3 / Windows SAPI5** (Zero-latency OS native speech)
-- **AI Intelligence**: Integrated with Google Gemini AI (`google-genai`) for conversational reasoning and autonomous function calling.
+- **AI Intelligence & Offline Fallback**: Integrated with Google Gemini AI (`google-genai`), OpenAI, and local **Ollama** models (Qwen 2.5 / Llama 3.2) for 100% offline intelligence.
 - **System, Audio & Workstation Controls**: Voice control for volume adjustment, media play/pause/skip, lock workstation, screenshots, and battery status.
 - **Non-blocking Timers & Voice Reminders**: Background countdown timers and voice reminders with natural language time parsing.
 - **Live Dynamic Custom Commands**: User-defined shortcuts in `data/custom_commands.txt` with regex **SafetyGuard** security and PIN passkey authorization.

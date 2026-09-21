@@ -1,4 +1,4 @@
-"""jarvis/handlers/ai.py — Handle conversational queries and task classification via Gemini, OpenAI, or Ollama."""
+"""jarvis/handlers/ai.py — Handle conversational queries, RAG long-term memory, and task classification via Gemini, OpenAI, or Ollama."""
 
 from __future__ import annotations
 
@@ -7,6 +7,8 @@ import os
 import re
 import json
 from collections import deque
+
+from jarvis.memory import get_memory_store
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +46,11 @@ SYSTEM_INSTRUCTION = (
     '   {"action": "copy_file", "source": "source_filename", "destination": "destination_filename"}\n'
     "12. To cut / move an existing file:\n"
     '   {"action": "move_file", "source": "source_filename", "destination": "destination_filename"}\n'
-    "13. To run multiple actions in sequence:\n"
+    "13. To store a persistent user fact or preference in long-term memory:\n"
+    '   {"action": "remember", "fact": "fact or preference to remember", "category": "preference"|"fact"|"general"}\n'
+    "14. To forget or delete a persistent memory item:\n"
+    '   {"action": "forget", "query": "memory topic to forget"}\n'
+    "15. To run multiple actions in sequence:\n"
     '   {"action": "multi", "commands": [array of action JSON objects]}\n'
     "\n"
     "Always reply in English. Keep any conversational 'reply' extremely brief and easy to read aloud by a text-to-speech engine."
@@ -139,7 +145,7 @@ def call_openai(prompt: str, config: dict) -> str | None:
 def call_ollama(prompt: str, config: dict) -> str | None:
     """Invoke a local Ollama model API."""
     url = config.get("ollama_url") or "http://localhost:11434"
-    model = config.get("ollama_model") or "llama3"
+    model = config.get("ollama_model") or "llama3.2"
 
     try:
         import requests
@@ -160,27 +166,34 @@ def call_ollama(prompt: str, config: dict) -> str | None:
             res_json = response.json()
             return res_json["message"]["content"].strip()
     except Exception as e:
-        logger.warning("Ollama API call failed: %s", e)
+        logger.debug("Ollama API call failed: %s", e)
     return None
 
 
 def generate_voice_response(prompt: str, config: dict) -> str:
     """
-    Route prompt to Gemini, OpenAI, or Ollama based on topic or instructions.
+    Route prompt to Gemini, OpenAI, or Ollama with Long-Term Memory (RAG) injection.
     Returns a JSON string matching SYSTEM_INSTRUCTION.
     """
-    # 1. Format history context
+    # 1. RAG: Retrieve relevant long-term memories from SQLite
+    mem_store = get_memory_store()
+    retrieved_memories = mem_store.query_memories(prompt, top_k=3, threshold=0.22)
+    memory_context = ""
+    if retrieved_memories:
+        memory_context = "Relevant User Facts & Long-Term Memories:\n" + "\n".join(f"- {m}" for m in retrieved_memories) + "\n\n"
+
+    # 2. Format history context
     history_str = ""
     if _chat_history:
-        history_str = "Conversation history:\n"
+        history_str = "Recent conversation history:\n"
         for role, text in _chat_history:
             speaker = "User" if role == "user" else "Assistant"
             history_str += f"{speaker}: {text}\n"
-        history_str += "\nNew Query: "
+        history_str += "\n"
 
-    formatted_prompt = f"{history_str}{prompt}"
+    formatted_prompt = f"{memory_context}{history_str}New User Query: {prompt}"
 
-    # 2. Determine provider order based on explicit tag or implicit routing
+    # 3. Determine provider order based on explicit tag or implicit routing
     p_lower = prompt.lower().strip()
     provider_order = []
 
@@ -201,7 +214,7 @@ def generate_voice_response(prompt: str, config: dict) -> str:
         else:
             provider_order = ["gemini", "openai", "ollama"]
 
-    # 3. Request completion
+    # 4. Request completion
     response_text = None
     selected_provider = None
 
@@ -227,7 +240,7 @@ def generate_voice_response(prompt: str, config: dict) -> str:
 
     logger.info("Routed query to provider: %s", selected_provider)
 
-    # 4. Parse output and log history context
+    # 5. Parse output and log history context
     try:
         parsed = clean_and_parse_json(response_text)
         reply_content = ""
@@ -237,6 +250,10 @@ def generate_voice_response(prompt: str, config: dict) -> str:
             act = parsed["action"]
             if act == "multi":
                 reply_content = f"Executing: {[c.get('action') for c in parsed.get('commands', [])]}"
+            elif act == "remember":
+                reply_content = f"Remembering: {parsed.get('fact')}"
+            elif act == "forget":
+                reply_content = f"Forgetting: {parsed.get('query')}"
             else:
                 reply_content = f"Triggering action '{act}'."
         else:

@@ -612,8 +612,89 @@ class RouterExtendedTests(unittest.TestCase):
                 res_exec = self.router.route("test voice trigger")
                 self.assertEqual(res_exec, "Voice created successfully")
 
+    def test_speech_stop_speaking_and_barge_in(self) -> None:
+        from jarvis.speech import is_speaking, stop_speaking, speak
+        # Verify stop_speaking resets flags and does not throw
+        stop_speaking()
+        self.assertFalse(is_speaking())
+
+    def test_kokoro_model_files_exist(self) -> None:
+        kokoro_model = Path("bin/kokoro/kokoro-v1.0.onnx")
+        voices_bin = Path("bin/kokoro/voices-v1.0.bin")
+        if kokoro_model.exists() and voices_bin.exists():
+            from kokoro_onnx import Kokoro
+            k = Kokoro(str(kokoro_model), str(voices_bin))
+            samples, sr = k.create("Kokoro test", voice="af_heart", speed=1.0, lang="en-us")
+            self.assertGreater(len(samples), 0)
+            self.assertEqual(sr, 24000)
+
+    def test_memory_store_crud_and_similarity(self) -> None:
+        from jarvis.memory import MemoryStore
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test_memory.db"
+            store = MemoryStore(db_path=db_path)
+
+            # Store memory
+            res = store.store_memory("My preferred AC temperature is 22 degrees.", category="preference")
+            self.assertIn("Remembered", res)
+
+            # Store another memory
+            store.store_memory("My project deadline is on Friday afternoon.", category="task")
+
+            # Semantic Query
+            results = store.query_memories("what temperature do I like for AC?", top_k=2)
+            self.assertGreater(len(results), 0)
+            self.assertIn("22 degrees", results[0])
+
+            # Query project deadline
+            deadline_res = store.query_memories("when is my project due?", top_k=2)
+            self.assertGreater(len(deadline_res), 0)
+            self.assertIn("Friday afternoon", deadline_res[0])
+
+            # List memories
+            all_mems = store.list_memories()
+            self.assertEqual(len(all_mems), 2)
+
+            # Delete memory
+            mem_id = all_mems[0]["id"]
+            self.assertTrue(store.delete_memory(mem_id))
+            self.assertEqual(len(store.list_memories()), 1)
+
+    def test_router_remember_and_forget_commands(self) -> None:
+        from jarvis.memory import MemoryStore, get_memory_store
+        with tempfile.TemporaryDirectory() as tmpdir:
+            test_store = MemoryStore(db_path=Path(tmpdir) / "test_mem.db")
+            with patch("jarvis.memory.get_memory_store", return_value=test_store):
+                # Test remember
+                res_rem = self.router.route("remember that my wifi password is secret_token_123")
+                self.assertIn("Remembered", res_rem)
+
+                # Test list memories
+                res_list = self.router.route("what do you remember")
+                self.assertIn("secret_token_123", res_list)
+
+                # Test forget
+                res_forget = self.router.route("forget that wifi password")
+                self.assertIn("Forgot", res_forget)
+
+    def test_server_memory_and_sse_endpoints(self) -> None:
+        from server import app
+        client = app.test_client()
+
+        # Test GET /api/memories
+        res = client.get("/api/memories")
+        self.assertEqual(res.status_code, 200)
+        self.assertIsInstance(res.get_json(), list)
+
+        # Test POST /api/memories/store
+        store_res = client.post("/api/memories/store", json={"content": "Meeting at 3pm", "category": "schedule"})
+        self.assertEqual(store_res.status_code, 200)
+        self.assertTrue(store_res.get_json()["success"])
+
 
 if __name__ == "__main__":
     unittest.main()
+
+
 
 

@@ -243,8 +243,31 @@ class Listener:
                 data = stream.read(1024, exception_on_overflow=False)
                 if data:
                     cleaned_data = noise_filter.process_frame(data)
-                    # Only queue audio frames if the assistant is not currently speaking
-                    if not is_speaking():
+                    # Full-Duplex Barge-in Detection:
+                    if is_speaking():
+                        # Check if user is speaking over the assistant audio
+                        is_barge_in = False
+                        if self._vad is not None:
+                            chunk = np.frombuffer(cleaned_data, dtype=np.int16).astype(np.float32) / 32768.0
+                            prob1 = self._vad.get_speech_probability(chunk[:512])
+                            prob2 = self._vad.get_speech_probability(chunk[512:])
+                            if (prob1 > 0.75 or prob2 > 0.75) and self._compute_rms(cleaned_data) > 35.0:
+                                is_barge_in = True
+                        elif self._compute_rms(cleaned_data) > 80.0:
+                            is_barge_in = True
+
+                        if is_barge_in:
+                            logger.info("Barge-in detected during speech! Stopping playback immediately.")
+                            from jarvis.speech import stop_speaking
+                            stop_speaking()
+                            # Flush stale queue and start capturing user interruption
+                            while not self._audio_queue.empty():
+                                try:
+                                    self._audio_queue.get_nowait()
+                                except Exception:
+                                    break
+                            self._audio_queue.put(cleaned_data)
+                    else:
                         self._audio_queue.put(cleaned_data)
             except Exception as e:
                 logger.warning("Error reading audio frame: %s", e)

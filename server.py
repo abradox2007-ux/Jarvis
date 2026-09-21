@@ -1,11 +1,17 @@
-"""server.py — lightweight Flask bridge between AC backend and the frontend UI."""
+"""server.py — Real-Time SSE event stream & REST bridge between Jarvis backend and the frontend UI."""
 
 from __future__ import annotations
 
+import json
+import logging
+import queue
 import time
 from collections import deque
+from pathlib import Path
 from threading import Lock
-from flask import Flask, jsonify, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory, Response
+
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__, static_folder="frontend")
 
@@ -17,6 +23,7 @@ _state: dict = {
 }
 _history: deque = deque(maxlen=50)   # most-recent 50 commands
 _standby_requested: bool = False
+_subscribers: list[queue.Queue[str]] = []
 
 _devices: dict = {
     "light": {"name": "Living Room Light", "state": "off"},
@@ -26,7 +33,18 @@ _devices: dict = {
 _router = None
 
 
-# ── Public helpers (called from main.py / router.py) ──────────────────────────
+def broadcast_event(event_type: str, data: dict) -> None:
+    """Broadcast an event string to all active SSE subscribers."""
+    payload = json.dumps({"type": event_type, "data": data, "ts": time.time()})
+    with _lock:
+        for q in list(_subscribers):
+            try:
+                q.put_nowait(payload)
+            except Exception:
+                pass
+
+
+# ── Public helpers (called from main.py / router.py / speech.py) ──────────────
 
 def request_standby() -> None:
     global _standby_requested
@@ -35,6 +53,7 @@ def request_standby() -> None:
         _state["phase"] = "waiting"
         _state["message"] = "Standing by. Say \"Hey Jarvis\" when ready."
         _state["updated_at"] = time.time()
+    broadcast_event("status", _state)
 
 
 def is_standby_requested() -> bool:
@@ -67,6 +86,7 @@ def get_router():
             _router = CommandRouter(config)
         return _router
 
+
 def get_devices() -> dict:
     with _lock:
         return {k: dict(v) for k, v in _devices.items()}
@@ -84,8 +104,9 @@ def update_device(device_id: str, updates: dict) -> bool:
                             pass
                     else:
                         _devices[device_id][k] = str(v)
-            return True
-        return False
+            devices_copy = {k: dict(v) for k, v in _devices.items()}
+    broadcast_event("devices", devices_copy)
+    return True
 
 
 def set_status(phase: str, message: str) -> None:
@@ -93,6 +114,8 @@ def set_status(phase: str, message: str) -> None:
         _state["phase"] = phase
         _state["message"] = message
         _state["updated_at"] = time.time()
+        state_copy = dict(_state)
+    broadcast_event("status", state_copy)
 
 
 def get_status_phase() -> str:
@@ -101,16 +124,62 @@ def get_status_phase() -> str:
 
 
 def add_history(command: str, response: str, ok: bool = True) -> None:
+    entry = {
+        "command": command,
+        "response": response,
+        "ok": ok,
+        "ts": time.strftime("%H:%M:%S"),
+    }
     with _lock:
-        _history.appendleft({
-            "command": command,
-            "response": response,
-            "ok": ok,
-            "ts": time.strftime("%H:%M:%S"),
-        })
+        _history.appendleft(entry)
+    broadcast_event("history", entry)
 
 
-# ── API routes ────────────────────────────────────────────────────────────────
+# ── Real-Time SSE Stream Route ────────────────────────────────────────────────
+
+@app.route("/api/events")
+def api_events():
+    """Server-Sent Events (SSE) real-time event stream for zero-lag UI updates."""
+    def event_stream():
+        q: queue.Queue[str] = queue.Queue(maxsize=100)
+        with _lock:
+            _subscribers.append(q)
+            initial_data = json.dumps({
+                "type": "init",
+                "data": {
+                    "state": _state,
+                    "devices": _devices,
+                    "history": list(_history)
+                },
+                "ts": time.time()
+            })
+        yield f"data: {initial_data}\n\n"
+
+        try:
+            while True:
+                try:
+                    msg = q.get(timeout=15.0)
+                    yield f"data: {msg}\n\n"
+                except queue.Empty:
+                    # Heartbeat to keep connection alive
+                    yield ": heartbeat\n\n"
+        finally:
+            with _lock:
+                if q in _subscribers:
+                    _subscribers.remove(q)
+
+    return Response(
+        event_stream(),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive"
+        }
+    )
+
+
+# ── REST API routes ───────────────────────────────────────────────────────────
 
 @app.route("/api/status")
 def api_status():
@@ -131,7 +200,6 @@ def api_get_devices():
 
 @app.route("/api/devices/update", methods=["POST"])
 def api_update_device():
-    from flask import request
     data = request.json or {}
     device_id = data.get("device")
     updates = data.get("updates", {})
@@ -143,7 +211,6 @@ def api_update_device():
 
 @app.route("/api/command", methods=["POST"])
 def api_post_command():
-    from flask import request
     from jarvis.speech import speak
     
     data = request.json or {}
@@ -181,6 +248,40 @@ def api_standby():
     return jsonify({"success": True, "message": "Jarvis put on standby."})
 
 
+# ── Memory (RAG) APIs ─────────────────────────────────────────────────────────
+
+@app.route("/api/memories", methods=["GET"])
+def api_get_memories():
+    from jarvis.memory import get_memory_store
+    return jsonify(get_memory_store().list_memories())
+
+
+@app.route("/api/memories/store", methods=["POST"])
+def api_store_memory():
+    from jarvis.memory import get_memory_store
+    data = request.json or {}
+    content = data.get("content", "").strip()
+    cat = data.get("category", "general")
+    if not content:
+        return jsonify({"success": False, "error": "Empty content"}), 400
+    res = get_memory_store().store_memory(content, category=cat)
+    broadcast_event("memory", {"action": "store", "content": content})
+    return jsonify({"success": True, "message": res})
+
+
+@app.route("/api/memories/delete", methods=["POST"])
+def api_delete_memory():
+    from jarvis.memory import get_memory_store
+    data = request.json or {}
+    try:
+        mem_id = int(data.get("id", -1))
+    except (ValueError, TypeError):
+        mem_id = -1
+    success = get_memory_store().delete_memory(mem_id)
+    broadcast_event("memory", {"action": "delete", "id": mem_id})
+    return jsonify({"success": success})
+
+
 # ── Diary APIs ────────────────────────────────────────────────────────────────
 
 @app.route("/api/diary", methods=["GET"])
@@ -191,13 +292,11 @@ def api_get_diary():
 
 @app.route("/api/diary/write", methods=["POST"])
 def api_write_diary():
-    from flask import request
     from jarvis.handlers import diary
     from jarvis.speech import speak
     data = request.json or {}
     text = data.get("text", "")
     
-    # Speak command and response (non-blocking)
     speak(f"Diary: {text}", block=False)
     response = diary.append_diary_entry(text)
     speak(response, block=False)
@@ -207,7 +306,6 @@ def api_write_diary():
 
 @app.route("/api/diary/overwrite", methods=["POST"])
 def api_overwrite_diary():
-    from flask import request
     from jarvis.handlers import diary
     from jarvis.speech import speak
     data = request.json or {}
@@ -217,7 +315,6 @@ def api_overwrite_diary():
         index = -1
     text = data.get("text", "")
     
-    # Speak command (non-blocking)
     speak(f"Modify diary entry {index} to {text}", block=False)
     success = diary.update_entry(index, text)
     if success:
@@ -230,7 +327,6 @@ def api_overwrite_diary():
 
 @app.route("/api/diary/delete", methods=["POST"])
 def api_delete_diary():
-    from flask import request
     from jarvis.handlers import diary
     from jarvis.speech import speak
     data = request.json or {}
@@ -239,7 +335,6 @@ def api_delete_diary():
     except (ValueError, TypeError):
         index = -1
         
-    # Speak command (non-blocking)
     speak(f"Delete diary entry {index}", block=False)
     success = diary.delete_entry(index)
     if success:
@@ -266,7 +361,6 @@ def api_get_files():
 
 @app.route("/api/files/read", methods=["GET"])
 def api_read_file():
-    from flask import request
     from jarvis.handlers import files
     name = request.args.get("name", "")
     content = files.read_file_content(name)
@@ -275,7 +369,6 @@ def api_read_file():
 
 @app.route("/api/files/save", methods=["POST"])
 def api_save_file():
-    from flask import request
     from jarvis.handlers import files
     from jarvis.speech import speak
     data = request.json or {}
@@ -289,7 +382,6 @@ def api_save_file():
 
 @app.route("/api/files/rename", methods=["POST"])
 def api_rename_file():
-    from flask import request
     from jarvis.handlers import files
     from jarvis.speech import speak
     data = request.json or {}
@@ -303,7 +395,6 @@ def api_rename_file():
 
 @app.route("/api/files/copy", methods=["POST"])
 def api_copy_file():
-    from flask import request
     from jarvis.handlers import files
     from jarvis.speech import speak
     data = request.json or {}
@@ -317,7 +408,6 @@ def api_copy_file():
 
 @app.route("/api/files/move", methods=["POST"])
 def api_move_file():
-    from flask import request
     from jarvis.handlers import files
     from jarvis.speech import speak
     data = request.json or {}
@@ -348,4 +438,3 @@ def add_header(response):
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
     return response
-

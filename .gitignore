@@ -10,6 +10,8 @@ __pycache__/
 logs/
 data/Diary.txt
 data/*.txt
+data/*.db
+*.db
 
 # Secrets / config overrides
 config.json

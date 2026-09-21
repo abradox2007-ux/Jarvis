@@ -291,6 +291,33 @@ class CommandRouter:
         if plugin_res is not None:
             return plugin_res
 
+        # ── Long-Term Memory (RAG) ───────────────────────────────────────────
+        if cmd.startswith("remember that ") or cmd.startswith("remember "):
+            fact = translated_command
+            for prefix in ("remember that ", "remember "):
+                if cmd.startswith(prefix):
+                    fact = translated_command[len(prefix):].strip()
+                    break
+            from jarvis.memory import get_memory_store
+            return get_memory_store().store_memory(fact, category="user_preference")
+
+        if cmd.startswith("forget that ") or cmd.startswith("forget "):
+            q = translated_command
+            for prefix in ("forget that ", "forget "):
+                if cmd.startswith(prefix):
+                    q = translated_command[len(prefix):].strip()
+                    break
+            from jarvis.memory import get_memory_store
+            return get_memory_store().forget_by_query(q)
+
+        if cmd in ("what do you remember", "list memories", "show memories", "read memories"):
+            from jarvis.memory import get_memory_store
+            mems = get_memory_store().list_memories()
+            if not mems:
+                return "I don't have any memories stored yet."
+            items = [m["content"] for m in mems[:5]]
+            return f"Here is what I remember: {'; '.join(items)}."
+
         # ── System Controls (Volume, Media, Workstation) ─────────────────────
         if cmd in ("mute volume", "unmute volume", "toggle mute"):
             return system.mute_volume()
@@ -567,7 +594,11 @@ class CommandRouter:
             return urls.open_url(target, self._url_aliases)
 
         # ── Unknown / AI Fallback ────────────────────────────────────────────
-        if self._config.get("gemini_api_key") or self._config.get("openai_api_key") or self._config.get("ollama_url") or os.environ.get("GEMINI_API_KEY"):
+        has_gemini = bool(self._config.get("gemini_api_key") or os.environ.get("GEMINI_API_KEY"))
+        has_openai = bool(self._config.get("openai_api_key"))
+        has_ollama = bool(self._config.get("use_ollama") or self._config.get("ollama_enabled"))
+
+        if has_gemini or has_openai or has_ollama:
             response = ai.generate_voice_response(command, self._config)
             return self.handle_llm_json_response(response)
 
@@ -727,6 +758,25 @@ class CommandRouter:
             targ = action_dict.get("target", "")
             sec = bool(action_dict.get("secure", False))
             return self._custom_mgr.add_custom_command(trig, atype, targ, sec)
+
+        # 8.5 Long-Term Memory (RAG) Actions
+        elif action == "remember":
+            from jarvis.memory import get_memory_store
+            fact = action_dict.get("fact") or action_dict.get("content", "")
+            cat = action_dict.get("category", "general")
+            return get_memory_store().store_memory(fact, category=cat)
+
+        elif action == "forget":
+            from jarvis.memory import get_memory_store
+            q = action_dict.get("query") or action_dict.get("fact", "")
+            return get_memory_store().forget_by_query(q)
+
+        elif action in ("list_memories", "show_memories"):
+            from jarvis.memory import get_memory_store
+            mems = get_memory_store().list_memories()
+            if not mems:
+                return "No memories stored."
+            return f"Memories: {'; '.join(m['content'] for m in mems[:5])}"
 
         # 9. Time/Date/Weather info fallback
         elif action == "tell_time":

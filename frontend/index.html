@@ -2212,13 +2212,57 @@ function showToast(msg, type) {
   setTimeout(() => { toast.style.display = 'none'; }, 3000);
 }
 
-/* ── Boot ────────────────────────────────────────────────────── */
-(async function boot() {
-  applyPhase('idle', 'Waiting for Jarvis to start…');
+/* ── Real-Time SSE Stream & Boot ────────────────────────────── */
+let eventSource = null;
 
-  setInterval(pollStatus,  POLL_MS);
-  setInterval(pollHistory, POLL_MS * 2);
-  setInterval(updateSmartHomeUI, POLL_MS * 2);
+function setupRealtimeSSE() {
+  if (window.EventSource) {
+    try {
+      eventSource = new EventSource('/api/events');
+      eventSource.onmessage = function(e) {
+        try {
+          const payload = JSON.parse(e.data);
+          if (payload.type === 'init') {
+            if (payload.data && payload.data.state) {
+              applyPhase(payload.data.state.phase, payload.data.state.message);
+            }
+            if (payload.data && payload.data.history) {
+              _lastHistoryJson = JSON.stringify(payload.data.history);
+              renderHistory(payload.data.history);
+            }
+            updateSmartHomeUI();
+          } else if (payload.type === 'status') {
+            applyPhase(payload.data.phase, payload.data.message);
+            if (hologram && (payload.data.phase === 'listening' || payload.data.phase === 'processing')) {
+              hologram.triggerShockwaveBurst(0.6);
+            }
+          } else if (payload.type === 'devices') {
+            updateSmartHomeUI();
+          } else if (payload.type === 'history') {
+            pollHistory();
+            if (hologram) hologram.triggerShockwaveBurst(0.9);
+          }
+        } catch (err) {
+          console.debug('SSE parse error:', err);
+        }
+      };
+      eventSource.onerror = function() {
+        console.debug('SSE reconnecting...');
+      };
+    } catch (e) {
+      console.debug('SSE init failed:', e);
+    }
+  }
+}
+
+(async function boot() {
+  applyPhase('idle', 'Connecting to Jarvis real-time stream…');
+  setupRealtimeSSE();
+
+  // Low-frequency fallback heartbeat polling
+  setInterval(pollStatus,  POLL_MS * 4);
+  setInterval(pollHistory, POLL_MS * 5);
+  setInterval(updateSmartHomeUI, POLL_MS * 5);
 
   pollStatus();
   pollHistory();
