@@ -104,20 +104,24 @@ class Listener:
         self._wake_word_model_name = config.get("wake_word_model", "hey_jarvis")
         self._wake_word_threshold = config.get("wake_word_threshold", 0.38)
         self._vad_threshold = config.get("vad_threshold", 0.15)
+        self._vad_silence_duration = float(config.get("vad_silence_duration", 0.45))
         self._vad_initial_timeout = config.get("vad_initial_timeout", 7.0)
         self._vad_model_path = config.get("vad_model_path", "bin/vad/silero_vad.onnx")
 
-        # 1. Preload STT Whisper
+        # 1. Preload STT Whisper with multi-threaded CPU optimization
         if self._stt_engine == "whisper":
-            logger.info("Preloading faster-whisper model '%s'...", self._whisper_model)
+            logger.info("Preloading faster-whisper model '%s' (low-latency CPU INT8)...", self._whisper_model)
             try:
                 from faster_whisper import WhisperModel
+                cpu_threads = min(4, os.cpu_count() or 4)
                 self._whisper_model_instance = WhisperModel(
                     self._whisper_model,
                     device="cpu",
-                    compute_type="int8"
+                    compute_type="int8",
+                    cpu_threads=cpu_threads,
+                    num_workers=1
                 )
-                logger.info("faster-whisper model preloaded.")
+                logger.info("faster-whisper model preloaded with %d CPU threads.", cpu_threads)
             except Exception as e:
                 logger.warning("Failed to preload faster-whisper: %s. Will fallback to Google STT.", e)
                 self._whisper_model_instance = None
@@ -350,7 +354,7 @@ class Listener:
                 if speech_started:
                     if silence_start_time is None:
                         silence_start_time = time.time()
-                    elif time.time() - silence_start_time > 0.85:
+                    elif time.time() - silence_start_time > self._vad_silence_duration:
                         logger.info("Speech ended (pause detected).")
                         break
                 else:
@@ -373,14 +377,16 @@ class Listener:
         if audio is None:
             return None
 
-        # 1. Try Whisper if enabled
+        # 1. Try Whisper if enabled (Ultra-fast greedy decoding)
         if self._stt_engine == "whisper" and self._whisper_model_instance is not None:
             try:
                 import io
                 wav_data = io.BytesIO(audio.get_wav_data(convert_rate=16000, convert_width=2))
                 segments, info = self._whisper_model_instance.transcribe(
                     wav_data,
-                    beam_size=3,
+                    language="en",
+                    beam_size=1,
+                    without_timestamps=True,
                     condition_on_previous_text=False
                 )
                 text_segments = []
@@ -431,7 +437,13 @@ class Listener:
             try:
                 import io
                 wav_data = io.BytesIO(audio.get_wav_data(convert_rate=16000, convert_width=2))
-                segments, info = self._whisper_model_instance.transcribe(wav_data, beam_size=3)
+                segments, info = self._whisper_model_instance.transcribe(
+                    wav_data,
+                    language="en",
+                    beam_size=1,
+                    without_timestamps=True,
+                    condition_on_previous_text=False
+                )
                 text = " ".join([s.text.strip() for s in segments if s.text.strip()]).strip()
                 if text:
                     logger.info("Transcribed (Whisper fallback): '%s'", text)

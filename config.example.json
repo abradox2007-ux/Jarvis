@@ -17,6 +17,7 @@
   "active_on_startup": true,
   "vad_engine": "silero",
   "vad_threshold": 0.15,
+  "vad_silence_duration": 0.45,
   "vad_initial_timeout": 7.0,
   "continuous_conversation": true,
   "follow_up_timeout": 8.0,
