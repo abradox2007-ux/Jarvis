@@ -755,10 +755,19 @@ class CommandRouter:
         if cmd in (
             "send message", "send a message", "send whatsapp message", "whatsapp message",
             "send a whatsapp message", "send message on whatsapp", "send message in whatsapp",
-            "send a message on whatsapp", "message on whatsapp", "whatsapp"
+            "send a message on whatsapp", "message on whatsapp"
         ):
             self._pending_message_state = {"step": "need_person_and_message"}
             return "Who would you like to send a message to, and what should it say?"
+
+        # ── Open WhatsApp ────────────────────────────────────────────────────
+        if cmd in (
+            "open whatsapp", "open whatsapp web", "open whats app", "open what's app",
+            "open what'sapp", "open what's app web", "open what'sapp web", "launch whatsapp",
+            "start whatsapp", "whatsapp web", "open web whatsapp", "open whatsapp app"
+        ):
+            whatsapp._open_whatsapp_web_in_browser()
+            return "Opening WhatsApp in your browser."
 
         # ── Search ───────────────────────────────────────────────────────────
         if cmd == "search" or cmd.startswith("search "):

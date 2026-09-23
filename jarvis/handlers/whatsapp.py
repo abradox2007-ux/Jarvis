@@ -98,9 +98,15 @@ def _focus_browser_or_whatsapp() -> bool:
 
 
 def _open_whatsapp_web_in_browser() -> None:
-    """Open WhatsApp Web URL reliably in default browser using Windows shell start."""
+    """Open WhatsApp Web URL reliably in default browser using os.startfile or shell start."""
     url = "https://web.whatsapp.com"
     logger.info("Opening WhatsApp Web in default browser: %s", url)
+    try:
+        os.startfile(url)
+        return
+    except Exception:
+        pass
+
     try:
         import subprocess
         subprocess.Popen(["cmd.exe", "/c", "start", "", url], shell=False)
@@ -151,15 +157,15 @@ def _copy_to_clipboard(text: str) -> None:
 def stage_whatsapp_message(person: str, message: str, wait_seconds: float = 18.0) -> tuple[bool, str]:
     """
     Follow the 9-step WhatsApp messaging flow:
-    1. Open WhatsApp Web in browser.
-    2. Wait 15 to 20 seconds for WhatsApp Web to load completely.
-    3. Bring browser window to the foreground.
-    4. Select (open) the search bar.
-    5. Enter the person's name.
-    6. Select the first option shown when searched for that name.
-    7. When entered the chat of the person, select the chat bar.
-    8. Enter the message into the chat bar.
-    9. Ask whether to send or not.
+    1. Acknowledge and notify user immediately.
+    2. Open WhatsApp Web in browser.
+    3. Wait 15 to 20 seconds for WhatsApp Web to load completely.
+    4. Bring browser window to the foreground.
+    5. Select (open) the search bar.
+    6. Enter the person's name.
+    7. Select the first option shown when searched for that name.
+    8. When entered the chat of the person, select the chat bar.
+    9. Enter the message into the chat bar and ask for confirmation.
     """
     cleaned_person = person.strip().strip("'\"")
     cleaned_msg = message.strip().strip("'\"")
@@ -171,11 +177,20 @@ def stage_whatsapp_message(person: str, message: str, wait_seconds: float = 18.0
 
     logger.info("Staging WhatsApp message to '%s': '%s'", cleaned_person, cleaned_msg)
 
-    # ── Step 1 & 2: Open WhatsApp Web and wait 15-20 seconds ─────────────────
+    # ── Step 1: Immediate Vocal & UI Feedback ───────────────────────────────
+    try:
+        from jarvis.speech import speak
+        from server import set_status
+        speak(f"Opening WhatsApp for {cleaned_person}. Please wait a few seconds.", block=False)
+        set_status("processing", f"Opening WhatsApp for {cleaned_person}...")
+    except Exception:
+        pass
+
+    # ── Step 2 & 3: Open WhatsApp Web and wait 15-20 seconds ─────────────────
     _open_whatsapp_web_in_browser()
     time.sleep(max(15.0, float(wait_seconds)))
 
-    # ── Step 3: Bring Browser / WhatsApp to Foreground ──────────────────────
+    # ── Step 4: Bring Browser / WhatsApp to Foreground ──────────────────────
     _focus_browser_or_whatsapp()
     time.sleep(0.5)
 
