@@ -36,35 +36,51 @@ def _force_window_foreground(hwnd: int) -> None:
         logger.debug("Force window foreground failed: %s", e)
 
 
-def _is_real_whatsapp_window(title: str) -> bool:
+def _is_browser_or_whatsapp_window(title: str) -> bool:
+    """Check if window title is a web browser or WhatsApp, strictly excluding IDEs and editors."""
     t = (title or "").strip().lower()
     if not t:
         return False
-    # Exclude code editors, IDEs, terminals, scripts, folder paths
     excluded = (
-        ".py", ".json", ".txt", ".md", ".js", ".html",
         "antigravity", "visual studio", "vscode", "code", "notepad",
-        "terminal", "powershell", "cmd.exe", "git",
-        "voice_assistant", "ac_voiceassistant"
+        "sublime", "pycharm", "atom", "terminal", "powershell",
+        "cmd.exe", "git", "voice_assistant", "ac_voiceassistant",
+        ".py", ".json", ".txt", ".md", ".js", ".html"
     )
     if any(ex in t for ex in excluded):
         return False
-    return "whatsapp" in t
+    return any(b in t for b in ("whatsapp", "chrome", "edge", "brave", "firefox", "opera", "browser"))
 
 
-def _find_and_focus_whatsapp_window() -> bool:
+def _focus_browser_or_whatsapp() -> bool:
     """
-    Search if WhatsApp Web (or WhatsApp desktop app) is currently open in any window.
-    Brings it to the foreground with Win32 focus lock bypass.
-    Only returns True if a window explicitly has 'whatsapp' in its title and is not a code editor.
+    Find and bring the WhatsApp Web or browser window to the foreground.
+    Excludes IDEs and text editors.
     """
     try:
         import pygetwindow as gw  # type: ignore
         windows = gw.getAllWindows()
 
+        # 1. Prioritize explicit WhatsApp title window
         for w in windows:
             title = (w.title or "").strip()
-            if _is_real_whatsapp_window(title):
+            if _is_browser_or_whatsapp_window(title) and "whatsapp" in title.lower():
+                try:
+                    if hasattr(w, "_hWnd"):
+                        _force_window_foreground(w._hWnd)
+                    else:
+                        if w.isMinimized:
+                            w.restore()
+                        w.activate()
+                    time.sleep(0.4)
+                    return True
+                except Exception:
+                    pass
+
+        # 2. Check general browser windows
+        for w in windows:
+            title = (w.title or "").strip()
+            if _is_browser_or_whatsapp_window(title):
                 try:
                     if hasattr(w, "_hWnd"):
                         _force_window_foreground(w._hWnd)
@@ -135,14 +151,15 @@ def _copy_to_clipboard(text: str) -> None:
 def stage_whatsapp_message(person: str, message: str, wait_seconds: float = 18.0) -> tuple[bool, str]:
     """
     Follow the 9-step WhatsApp messaging flow:
-    1. Open WhatsApp Web in browser (or switch to existing WhatsApp window).
+    1. Open WhatsApp Web in browser.
     2. Wait 15 to 20 seconds for WhatsApp Web to load completely.
-    3. Select (open) the search bar.
-    4. Enter the person's name.
-    5. Select the first option shown when searched for that name.
-    6. When entered the chat of the person, select the chat bar.
-    7. Enter the message into the chat bar.
-    8. Ask whether to send or not.
+    3. Bring browser window to the foreground.
+    4. Select (open) the search bar.
+    5. Enter the person's name.
+    6. Select the first option shown when searched for that name.
+    7. When entered the chat of the person, select the chat bar.
+    8. Enter the message into the chat bar.
+    9. Ask whether to send or not.
     """
     cleaned_person = person.strip().strip("'\"")
     cleaned_msg = message.strip().strip("'\"")
@@ -155,80 +172,69 @@ def stage_whatsapp_message(person: str, message: str, wait_seconds: float = 18.0
     logger.info("Staging WhatsApp message to '%s': '%s'", cleaned_person, cleaned_msg)
 
     # ── Step 1 & 2: Open WhatsApp Web and wait 15-20 seconds ─────────────────
-    is_already_open = _find_and_focus_whatsapp_window()
-    if not is_already_open:
-        logger.info("Opening WhatsApp Web in browser...")
-        _open_whatsapp_web_in_browser()
-        time.sleep(max(15.0, float(wait_seconds)))
-        _find_and_focus_whatsapp_window()
-    else:
-        logger.info("WhatsApp window found. Bringing to foreground...")
-        time.sleep(1.0)
+    _open_whatsapp_web_in_browser()
+    time.sleep(max(15.0, float(wait_seconds)))
 
-    # ── Steps 3 to 7: Automate WhatsApp Web UI ──────────────────────────────
+    # ── Step 3: Bring Browser / WhatsApp to Foreground ──────────────────────
+    _focus_browser_or_whatsapp()
+    time.sleep(0.5)
+
+    # ── Steps 4 to 8: Automate WhatsApp Web UI ──────────────────────────────
     try:
         import pyautogui  # type: ignore
         pyautogui.FAILSAFE = False
 
-        _find_and_focus_whatsapp_window()
         screen_w, screen_h = pyautogui.size()
+
+        # Ensure browser is in front
+        _focus_browser_or_whatsapp()
+        time.sleep(0.3)
 
         # Clear any active menu / modal
         pyautogui.press("esc")
         time.sleep(0.3)
 
-        # ── Step 3: Select (open) the search bar ─────────────────────────────
-        search_x = max(150, int(screen_w * 0.18))
-        search_y = max(120, int(screen_h * 0.19))
-        
-        # Click directly on the search bar
-        pyautogui.click(search_x, search_y)
-        time.sleep(0.3)
-
-        # Send WhatsApp Web search shortcut: Ctrl+Alt+/
+        # Focus Search in WhatsApp Web via global shortcut
         pyautogui.hotkey("ctrl", "alt", "/")
         time.sleep(0.3)
 
-        # ── Step 4: Enter the person's name ──────────────────────────────────
+        # Also click in the search area to ensure focus
+        search_x = max(180, int(screen_w * 0.18))
+        search_y = max(140, int(screen_h * 0.18))
+        pyautogui.click(search_x, search_y)
+        time.sleep(0.2)
+
+        # Clear existing search text
+        pyautogui.hotkey("ctrl", "a")
+        time.sleep(0.1)
+        pyautogui.press("backspace")
+        time.sleep(0.1)
+
+        # ── Step 5: Enter the person's name ──────────────────────────────────
         _copy_to_clipboard(cleaned_person)
         time.sleep(0.1)
         pyautogui.hotkey("ctrl", "v")
-        time.sleep(0.2)
+        time.sleep(2.0)  # Wait for search results to filter down
 
-        # ── Step 5: Select the first option shown when searched ──────────────
-        # Wait 2.0s for search results to filter down
-        time.sleep(2.0)
-
-        # Click the 1st search result item directly below search bar
-        first_result_x = search_x
-        first_result_y = search_y + 80
-        pyautogui.click(first_result_x, first_result_y)
-        time.sleep(0.4)
-
-        # Press Enter to open the conversation
+        # ── Step 6: Select the first option (Enter opens the chat) ───────────
         pyautogui.press("enter")
         time.sleep(1.5)
 
-        # ── Step 6: Select the chat bar ──────────────────────────────────────
-        chat_x = max(250, int(screen_w * 0.55))
+        # ── Step 7: Select the chat bar ──────────────────────────────────────
+        chat_x = max(300, int(screen_w * 0.50))
         chat_y = max(200, int(screen_h * 0.95))
         pyautogui.click(chat_x, chat_y)
         time.sleep(0.3)
 
-        # ── Step 7: Enter the message ────────────────────────────────────────
+        # ── Step 8: Enter the message into the chat bar ──────────────────────
         _copy_to_clipboard(cleaned_msg)
         time.sleep(0.1)
         pyautogui.hotkey("ctrl", "v")
         time.sleep(0.3)
 
-        # ── Step 8: Return status for confirmation prompt ────────────────────
+        # ── Step 9: Return status for confirmation prompt ────────────────────
         return True, f"I have prepared your message to {cleaned_person}: '{cleaned_msg}'. Should I send it?"
 
-    except ImportError:
-        logger.warning("pyautogui is not installed. Staging message via direct WhatsApp link fallback.")
-        encoded_msg = urllib.parse.quote(cleaned_msg)
-        webbrowser.open(f"https://web.whatsapp.com/send?text={encoded_msg}")
-        return True, f"I opened WhatsApp for {cleaned_person} with your message. Should I send it?"
     except Exception as e:
         logger.error("Error during WhatsApp automation: %s", e)
         return False, f"Could not prepare WhatsApp message due to error: {e}"
@@ -239,29 +245,13 @@ def confirm_send_whatsapp_message(person: str = "") -> str:
     Step 9 (Yes): Send the staged WhatsApp message.
     """
     try:
-        _find_and_focus_whatsapp_window()
+        _focus_browser_or_whatsapp()
         import pyautogui  # type: ignore
         pyautogui.FAILSAFE = False
 
-        screen_w, screen_h = pyautogui.size()
         time.sleep(0.3)
-
-        # 1. Click chat bar to ensure input focus
-        chat_x = max(250, int(screen_w * 0.55))
-        chat_y = max(200, int(screen_h * 0.95))
-        pyautogui.click(chat_x, chat_y)
-        time.sleep(0.2)
-
-        # 2. Press Enter to submit the message
         pyautogui.press("enter")
         time.sleep(0.3)
-
-        # 3. Click the green Send button on the bottom right as guaranteed backup
-        send_btn_x = max(chat_x + 50, int(screen_w * 0.97))
-        send_btn_y = chat_y
-        pyautogui.click(send_btn_x, send_btn_y)
-        time.sleep(0.3)
-
     except Exception as e:
         logger.warning("Failed to send WhatsApp message: %s", e)
 
@@ -274,17 +264,11 @@ def cancel_whatsapp_message() -> str:
     Step 9 (No): Clear the draft and prompt the user for the correct person and message again.
     """
     try:
-        _find_and_focus_whatsapp_window()
+        _focus_browser_or_whatsapp()
         import pyautogui  # type: ignore
         pyautogui.FAILSAFE = False
 
-        screen_w, screen_h = pyautogui.size()
-        chat_x = max(250, int(screen_w * 0.55))
-        chat_y = max(200, int(screen_h * 0.95))
-        pyautogui.click(chat_x, chat_y)
-        time.sleep(0.2)
-
-        # Clear text in chat bar
+        time.sleep(0.3)
         pyautogui.hotkey("ctrl", "a")
         time.sleep(0.1)
         pyautogui.press("backspace")
