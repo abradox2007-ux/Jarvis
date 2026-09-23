@@ -27,7 +27,7 @@ WAKE_WORDS = [
 
 PHONETIC_JARVIS = {
     "jarvis", "jervis", "jarvus", "javis", "jarves", "charvis",
-    "travis", "service", "harvest", "starfish", "artist"
+    "travis", "service", "harvest", "starfish", "artist" , "jar"
 }
 
 

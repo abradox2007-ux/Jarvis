@@ -239,7 +239,8 @@ class CommandRouter:
         self._custom_mgr = CustomCommandManager(config)
         self._plugin_mgr = PluginManager(config.get("plugins_dir", "./plugins"))
         self._pending_whatsapp: dict[str, str] | None = None
-        self._whatsapp_wait_seconds: float = float(config.get("whatsapp_web_wait_seconds", 6.0))
+        self._pending_message_state: dict[str, str] | None = None
+        self._whatsapp_wait_seconds: float = float(config.get("whatsapp_web_wait_seconds", 18.0))
         self._local_playlist_dir: str = config.get("local_playlist_dir", r"C:\Users\Abinesh\Music\My_playlist")
 
     def route(self, command: str) -> str:
@@ -278,6 +279,48 @@ class CommandRouter:
         cmd = translated_command.strip().lower()
         cmd = cmd.replace("dairy", "diary")
         logger.debug("Routing single command: %s (original: %s)", cmd, command)
+
+        # ── Check Pending Multi-Turn Message State ───────────────────────────
+        if self._pending_message_state:
+            state = self._pending_message_state
+            clean_cmd = cmd.strip().rstrip(".!?,")
+            if clean_cmd in ("no", "cancel", "stop", "nevermind", "never mind", "இல்லை", "வேண்டாம்", "ரத்து"):
+                self._pending_message_state = None
+                return "Message cancelled."
+
+            # Case 1: We already know the recipient, now user spoke the message text
+            if state.get("step") == "need_message":
+                person = state.get("person", "")
+                self._pending_message_state = None
+                msg_txt = translated_command.strip()
+                success, response_txt = whatsapp.stage_whatsapp_message(
+                    person=person,
+                    message=msg_txt,
+                    wait_seconds=self._whatsapp_wait_seconds
+                )
+                if success:
+                    self._pending_whatsapp = {"person": person, "message": msg_txt}
+                return response_txt
+
+            # Case 2: We asked "Who would you like to send a message to, and what should it say?"
+            elif state.get("step") == "need_person_and_message":
+                self._pending_message_state = None
+                m_to = re.match(r"^(?:to\s+)?([a-zA-Z0-9_\- .]+?)(?:\s+(?:saying|that|is|:)\s+|\s*:\s*|\s+)(.+)$", translated_command, re.I)
+                if m_to and not m_to.group(1).strip().lower() in ("my", "the", "a"):
+                    person = m_to.group(1).strip().strip("'\"")
+                    msg_txt = m_to.group(2).strip().strip("'\"")
+                    success, response_txt = whatsapp.stage_whatsapp_message(
+                        person=person,
+                        message=msg_txt,
+                        wait_seconds=self._whatsapp_wait_seconds
+                    )
+                    if success:
+                        self._pending_whatsapp = {"person": person, "message": msg_txt}
+                    return response_txt
+                else:
+                    person = translated_command.strip().strip("'\"")
+                    self._pending_message_state = {"step": "need_message", "person": person}
+                    return f"What message would you like to send to {person}?"
 
         # ── Check Pending WhatsApp Message Confirmation ──────────────────────
         if self._pending_whatsapp:
@@ -587,10 +630,9 @@ class CommandRouter:
             return files.move_file(src_f, dst_f, self._search_paths)
 
         # ── WhatsApp / Send Message ──────────────────────────────────────────
-        # Pattern 1: "send (a)? (whatsapp)? message <msg> to <person>"
-        # e.g., send message "Good afternoon" to "Charan", send message Good afternoon to Charan
+        # 1. "send (a)? (whatsapp)? message <msg> to <person>"
         match_msg_to = re.match(
-            r"^(?:send\s+)?(?:a\s+)?(?:whatsapp\s+)?message\s+(?:saying\s+|that\s+)?['\"]?(.+?)['\"]?\s+to\s+['\"]?(.+?)['\"]?$",
+            r"^(?:send\s+)?(?:a\s+)?(?:whatsapp\s+)?message\s+(?:saying\s+|that\s+)?['\"]?(.+?)['\"]?\s+to\s+['\"]?([a-zA-Z0-9_\- .]+?)['\"]?$",
             translated_command,
             re.IGNORECASE
         )
@@ -607,9 +649,9 @@ class CommandRouter:
                     self._pending_whatsapp = {"person": person_name, "message": msg_content}
                 return response_txt
 
-        # Pattern 2: "send (a)? (whatsapp)? message to <person> saying/that/content/: <msg>"
+        # 2. "send (a)? (whatsapp)? message to <person> saying/that/content/: <msg>" or without keyword
         match_msg_to_person = re.match(
-            r"^(?:send\s+)?(?:a\s+)?(?:whatsapp\s+)?message\s+to\s+['\"]?(.+?)['\"]?\s*(?::|\s+(?:saying|that|content|is)\s+|\s+)\s*['\"]?(.+?)['\"]?$",
+            r"^(?:send\s+)?(?:a\s+)?(?:whatsapp\s+)?message\s+to\s+['\"]?([a-zA-Z0-9_\- .]+?)['\"]?\s*(?::|\s+(?:saying|that|content|is)\s+|\s+)\s*['\"]?(.+?)['\"]?$",
             translated_command,
             re.IGNORECASE
         )
@@ -626,9 +668,28 @@ class CommandRouter:
                     self._pending_whatsapp = {"person": person_name, "message": msg_content}
                 return response_txt
 
-        # Pattern 3: "send <msg> to <person> on/via whatsapp"
+        # 3. "send <person> (a)? (whatsapp)? message (saying/that/:)? <msg>"
+        match_send_person_msg = re.match(
+            r"^send\s+['\"]?([a-zA-Z0-9_\- .]+?)['\"]?\s+(?:a\s+)?(?:whatsapp\s+)?message\s*(?::|\s+(?:saying|that|content|is)\s+|\s+)?\s*['\"]?(.+?)['\"]?$",
+            translated_command,
+            re.IGNORECASE
+        )
+        if match_send_person_msg and not match_send_person_msg.group(1).strip().lower().startswith("to "):
+            person_name = match_send_person_msg.group(1).strip().strip("'\"")
+            msg_content = match_send_person_msg.group(2).strip().strip("'\"")
+            if person_name and msg_content:
+                success, response_txt = whatsapp.stage_whatsapp_message(
+                    person=person_name,
+                    message=msg_content,
+                    wait_seconds=self._whatsapp_wait_seconds
+                )
+                if success:
+                    self._pending_whatsapp = {"person": person_name, "message": msg_content}
+                return response_txt
+
+        # 4. "send <msg> to <person> on/via/through whatsapp"
         match_send_on_wa = re.match(
-            r"^send\s+['\"]?(.+?)['\"]?\s+to\s+['\"]?(.+?)['\"]?\s+(?:on|via|in|through)\s+whatsapp$",
+            r"^send\s+['\"]?(.+?)['\"]?\s+to\s+['\"]?([a-zA-Z0-9_\- .]+?)['\"]?\s+(?:on|via|in|through)\s+whatsapp$",
             translated_command,
             re.IGNORECASE
         )
@@ -645,13 +706,32 @@ class CommandRouter:
                     self._pending_whatsapp = {"person": person_name, "message": msg_content}
                 return response_txt
 
-        # Pattern 4: "whatsapp <person> saying/that/: <msg>"
-        match_wa_direct = re.match(
-            r"^(?:whatsapp|message)\s+['\"]?([a-zA-Z0-9_\- .]+?)['\"]?\s*(?::|\s+(?:saying|that|content|is)\s+)\s*['\"]?(.+?)['\"]?$",
+        # 5. "send to <person> (saying/that/:)? <msg>"
+        match_send_to = re.match(
+            r"^send\s+to\s+['\"]?([a-zA-Z0-9_\- .]+?)['\"]?\s*(?::|\s+(?:saying|that|content|is)\s+|\s+)\s*['\"]?(.+?)['\"]?$",
             translated_command,
             re.IGNORECASE
         )
-        if match_wa_direct:
+        if match_send_to:
+            person_name = match_send_to.group(1).strip().strip("'\"")
+            msg_content = match_send_to.group(2).strip().strip("'\"")
+            if person_name and msg_content:
+                success, response_txt = whatsapp.stage_whatsapp_message(
+                    person=person_name,
+                    message=msg_content,
+                    wait_seconds=self._whatsapp_wait_seconds
+                )
+                if success:
+                    self._pending_whatsapp = {"person": person_name, "message": msg_content}
+                return response_txt
+
+        # 6. "whatsapp/message <person> saying/that/: <msg>" or "<person> <msg>"
+        match_wa_direct = re.match(
+            r"^(?:whatsapp|message)\s+['\"]?([a-zA-Z0-9_\- .]+?)['\"]?\s*(?::|\s+(?:saying|that|content|is)\s+|\s+)\s*['\"]?(.+?)['\"]?$",
+            translated_command,
+            re.IGNORECASE
+        )
+        if match_wa_direct and not match_wa_direct.group(1).strip().lower() in ("to", "a", "the", "message", "web"):
             person_name = match_wa_direct.group(1).strip().strip("'\"")
             msg_content = match_wa_direct.group(2).strip().strip("'\"")
             if person_name and msg_content:
@@ -664,14 +744,20 @@ class CommandRouter:
                     self._pending_whatsapp = {"person": person_name, "message": msg_content}
                 return response_txt
 
-        # Incomplete command fallbacks
-        if re.match(r"^(?:send\s+(?:a\s+)?(?:whatsapp\s+)?message\s+to|message|whatsapp)\s+['\"]?([a-zA-Z0-9_\- .]+?)['\"]?$", translated_command, re.I):
-            m = re.match(r"^(?:send\s+(?:a\s+)?(?:whatsapp\s+)?message\s+to|message|whatsapp)\s+['\"]?([a-zA-Z0-9_\- .]+?)['\"]?$", translated_command, re.I)
+        # Incomplete command fallbacks with state tracking
+        if re.match(r"^(?:send\s+(?:a\s+)?(?:whatsapp\s+)?message\s+to|send\s+to|message|whatsapp)\s+['\"]?([a-zA-Z0-9_\- .]+?)['\"]?$", translated_command, re.I):
+            m = re.match(r"^(?:send\s+(?:a\s+)?(?:whatsapp\s+)?message\s+to|send\s+to|message|whatsapp)\s+['\"]?([a-zA-Z0-9_\- .]+?)['\"]?$", translated_command, re.I)
             person_name = m.group(1).strip().strip("'\"") if m else ""
-            if person_name and person_name.lower() not in ("google", "youtube", "notepad", "notes", "diary"):
+            if person_name and person_name.lower() not in ("google", "youtube", "notepad", "notes", "diary", "web", "app"):
+                self._pending_message_state = {"step": "need_message", "person": person_name}
                 return f"What message would you like to send to {person_name}?"
 
-        if cmd in ("send message", "send a message", "send whatsapp message", "whatsapp message", "send a whatsapp message"):
+        if cmd in (
+            "send message", "send a message", "send whatsapp message", "whatsapp message",
+            "send a whatsapp message", "send message on whatsapp", "send message in whatsapp",
+            "send a message on whatsapp", "message on whatsapp", "whatsapp"
+        ):
+            self._pending_message_state = {"step": "need_person_and_message"}
             return "Who would you like to send a message to, and what should it say?"
 
         # ── Search ───────────────────────────────────────────────────────────

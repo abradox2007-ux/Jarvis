@@ -703,6 +703,7 @@ class RouterExtendedTests(unittest.TestCase):
 
             # Reset pending
             self.router._pending_whatsapp = None
+            self.router._pending_message_state = None
             mock_stage.reset_mock()
 
             # Pattern 1 with quotes: send message "Good afternoon" to "Charan"
@@ -711,6 +712,7 @@ class RouterExtendedTests(unittest.TestCase):
             self.assertIn("prepared your message", res_quotes)
 
             self.router._pending_whatsapp = None
+            self.router._pending_message_state = None
             mock_stage.reset_mock()
 
             # Pattern 2: send message to <person> saying <msg>
@@ -719,6 +721,16 @@ class RouterExtendedTests(unittest.TestCase):
             self.assertIn("prepared your message", res2)
 
             self.router._pending_whatsapp = None
+            self.router._pending_message_state = None
+            mock_stage.reset_mock()
+
+            # Pattern 2 direct: send message to Charan Good afternoon
+            res2_direct = self.router.route("send message to Charan Good afternoon")
+            mock_stage.assert_called_with(person="Charan", message="Good afternoon", wait_seconds=18.0)
+            self.assertIn("prepared your message", res2_direct)
+
+            self.router._pending_whatsapp = None
+            self.router._pending_message_state = None
             mock_stage.reset_mock()
 
             # Pattern 2 with 'that': send a message to Charan that I will be late
@@ -727,6 +739,7 @@ class RouterExtendedTests(unittest.TestCase):
             self.assertIn("prepared your message", res3)
 
             self.router._pending_whatsapp = None
+            self.router._pending_message_state = None
             mock_stage.reset_mock()
 
             # Pattern 3: send <msg> to <person> on whatsapp
@@ -735,12 +748,44 @@ class RouterExtendedTests(unittest.TestCase):
             self.assertIn("prepared your message", res4)
 
             self.router._pending_whatsapp = None
+            self.router._pending_message_state = None
             mock_stage.reset_mock()
 
             # Pattern 4: whatsapp <person> saying <msg>
             res5 = self.router.route("whatsapp Charan saying Good afternoon")
             mock_stage.assert_called_with(person="Charan", message="Good afternoon", wait_seconds=18.0)
             self.assertIn("prepared your message", res5)
+
+            self.router._pending_whatsapp = None
+            self.router._pending_message_state = None
+            mock_stage.reset_mock()
+
+            # Pattern 5: send to <person> <msg>
+            res6 = self.router.route("send to Charan Good afternoon")
+            mock_stage.assert_called_with(person="Charan", message="Good afternoon", wait_seconds=18.0)
+            self.assertIn("prepared your message", res6)
+
+            self.router._pending_whatsapp = None
+            self.router._pending_message_state = None
+            mock_stage.reset_mock()
+
+            # Multi-turn 1: "send message to Charan" -> "Good afternoon"
+            res_mt1 = self.router.route("send message to Charan")
+            self.assertIn("What message would you like to send to Charan", res_mt1)
+            res_mt2 = self.router.route("Good afternoon")
+            mock_stage.assert_called_with(person="Charan", message="Good afternoon", wait_seconds=18.0)
+            self.assertIn("prepared your message", res_mt2)
+
+            self.router._pending_whatsapp = None
+            self.router._pending_message_state = None
+            mock_stage.reset_mock()
+
+            # Multi-turn 2: "send message" -> "to Charan Good afternoon"
+            res_gen1 = self.router.route("send message")
+            self.assertIn("Who would you like to send a message to", res_gen1)
+            res_gen2 = self.router.route("to Charan Good afternoon")
+            mock_stage.assert_called_with(person="Charan", message="Good afternoon", wait_seconds=18.0)
+            self.assertIn("prepared your message", res_gen2)
 
     def test_whatsapp_confirmation_and_cancellation_flow(self) -> None:
         with patch("jarvis.handlers.whatsapp.stage_whatsapp_message", return_value=(True, "I have prepared your message to Charan: 'Good afternoon'. Should I send it?")):

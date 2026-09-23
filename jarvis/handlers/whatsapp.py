@@ -38,14 +38,14 @@ def _force_window_foreground(hwnd: int) -> None:
 
 def _find_and_focus_whatsapp_window() -> bool:
     """
-    Search if WhatsApp Web (or WhatsApp app) is already open in any window.
+    Search if WhatsApp Web (or WhatsApp desktop app) is currently open in any window.
     Brings it to the foreground with Win32 focus lock bypass.
+    Only returns True if a window explicitly has 'whatsapp' in its title.
     """
     try:
         import pygetwindow as gw  # type: ignore
         windows = gw.getAllWindows()
 
-        # 1. Prioritize window with "whatsapp" in title
         for w in windows:
             title = (w.title or "").strip().lower()
             if "whatsapp" in title:
@@ -60,25 +60,23 @@ def _find_and_focus_whatsapp_window() -> bool:
                     return True
                 except Exception:
                     pass
-
-        # 2. Check if a browser window is open
-        for w in windows:
-            title = (w.title or "").strip().lower()
-            if any(browser in title for browser in ("chrome", "edge", "brave", "firefox", "opera")):
-                try:
-                    if hasattr(w, "_hWnd"):
-                        _force_window_foreground(w._hWnd)
-                    else:
-                        if w.isMinimized:
-                            w.restore()
-                        w.activate()
-                    time.sleep(0.3)
-                    return True
-                except Exception:
-                    pass
     except Exception as e:
         logger.debug("Window focus check error: %s", e)
     return False
+
+
+def _open_whatsapp_web_in_browser() -> None:
+    """Open WhatsApp Web URL reliably in default browser."""
+    url = "https://web.whatsapp.com"
+    try:
+        opened = webbrowser.open(url)
+        if not opened:
+            os.system(f'start "" "{url}"')
+    except Exception:
+        try:
+            os.system(f'start "" "{url}"')
+        except Exception as e:
+            logger.warning("Could not launch browser for WhatsApp: %s", e)
 
 
 def _copy_to_clipboard(text: str) -> None:
@@ -118,8 +116,8 @@ def _copy_to_clipboard(text: str) -> None:
 def stage_whatsapp_message(person: str, message: str, wait_seconds: float = 18.0) -> tuple[bool, str]:
     """
     Follow the 9-step WhatsApp messaging flow:
-    1. Open WhatsApp Web (or switch to existing WhatsApp tab).
-    2. Wait 15 to 20 seconds for WhatsApp Web to load.
+    1. Open WhatsApp Web in browser (or switch to existing WhatsApp window).
+    2. Wait 15 to 20 seconds for WhatsApp Web to load completely.
     3. Select (open) the search bar.
     4. Enter the person's name.
     5. Select the first option shown when searched for that name.
@@ -141,11 +139,11 @@ def stage_whatsapp_message(person: str, message: str, wait_seconds: float = 18.0
     is_already_open = _find_and_focus_whatsapp_window()
     if not is_already_open:
         logger.info("Opening WhatsApp Web in browser...")
-        webbrowser.open("https://web.whatsapp.com")
+        _open_whatsapp_web_in_browser()
         time.sleep(max(15.0, float(wait_seconds)))
         _find_and_focus_whatsapp_window()
     else:
-        logger.info("WhatsApp is already open. Switching to active window...")
+        logger.info("WhatsApp window found. Bringing to foreground...")
         time.sleep(1.0)
 
     # ── Steps 3 to 7: Automate WhatsApp Web UI ──────────────────────────────
