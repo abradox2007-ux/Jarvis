@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 import urllib.parse
 import webbrowser
@@ -11,14 +12,16 @@ logger = logging.getLogger(__name__)
 
 
 def _force_window_foreground(hwnd: int) -> None:
-    """Bypass Windows foreground lock restrictions and bring window to front."""
+    """Bypass Windows foreground lock restrictions and bring window to front without altering its size."""
     try:
         import ctypes
         user32 = ctypes.windll.user32
         kernel32 = ctypes.windll.kernel32
 
         SW_RESTORE = 9
-        user32.ShowWindow(hwnd, SW_RESTORE)
+        # Only restore if currently minimized to avoid changing window dimensions
+        if user32.IsIconic(hwnd):
+            user32.ShowWindow(hwnd, SW_RESTORE)
 
         fg_hwnd = user32.GetForegroundWindow()
         fg_thread = user32.GetWindowThreadProcessId(fg_hwnd, None)
@@ -54,7 +57,7 @@ def _is_browser_or_whatsapp_window(title: str) -> bool:
 
 def _focus_browser_or_whatsapp() -> bool:
     """
-    Find and bring the WhatsApp Web or browser window to the foreground.
+    Find and bring WhatsApp Web or browser window to the foreground without altering its size.
     Excludes IDEs and text editors.
     """
     try:
@@ -154,18 +157,31 @@ def _copy_to_clipboard(text: str) -> None:
         logger.warning("Failed to copy to clipboard: %s", e)
 
 
+def _release_all_modifier_keys() -> None:
+    """Ensure no modifier keys (Ctrl, Alt, Shift, Win) remain stuck in Windows."""
+    try:
+        import pyautogui  # type: ignore
+        for k in ("ctrl", "alt", "shift", "win", "ctrlleft", "ctrlright", "altleft", "altright"):
+            try:
+                pyautogui.keyUp(k)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
 def stage_whatsapp_message(person: str, message: str, wait_seconds: float = 18.0) -> tuple[bool, str]:
     """
-    Follow the 9-step WhatsApp messaging flow:
+    Follow the WhatsApp messaging flow:
     1. Acknowledge and notify user immediately.
     2. Open WhatsApp Web in browser.
     3. Wait 15 to 20 seconds for WhatsApp Web to load completely.
-    4. Bring browser window to the foreground.
-    5. Select (open) the search bar.
+    4. Bring browser window to the foreground without changing its size.
+    5. Select (open) the search bar using Ctrl + Alt + /.
     6. Enter the person's name.
-    7. Select the first option shown when searched for that name.
-    8. When entered the chat of the person, select the chat bar.
-    9. Enter the message into the chat bar and ask for confirmation.
+    7. Select the first option shown (Press Enter) to enter the chat.
+    8. Directly paste the message into the chat.
+    9. Ask for confirmation before sending.
     """
     cleaned_person = person.strip().strip("'\"")
     cleaned_msg = message.strip().strip("'\"")
@@ -192,74 +208,41 @@ def stage_whatsapp_message(person: str, message: str, wait_seconds: float = 18.0
 
     # ── Step 4: Bring Browser / WhatsApp to Foreground ──────────────────────
     _focus_browser_or_whatsapp()
-    time.sleep(0.5)
+    time.sleep(0.3)
 
-    # ── Steps 4 to 8: Automate WhatsApp Web UI ──────────────────────────────
+    # ── Steps 5 to 8: Automate WhatsApp Web UI ──────────────────────────────
     try:
         import pyautogui  # type: ignore
         pyautogui.FAILSAFE = False
 
-        screen_w, screen_h = pyautogui.size()
-
-        # Ensure browser is in front
-        _focus_browser_or_whatsapp()
-        time.sleep(0.4)
+        _release_all_modifier_keys()
 
         # Clear any active menu / modal
         pyautogui.press("esc")
         time.sleep(0.3)
 
-        # ── Step 5: Focus Search Bar ─────────────────────────────────────────
-        # Method A: Try WhatsApp Web New Chat shortcut (Ctrl+Alt+N) which auto-focuses search
-        pyautogui.hotkey("ctrl", "alt", "n")
-        time.sleep(0.4)
-
-        # Method B: WhatsApp Web Global Search shortcut (Ctrl+Alt+/)
+        # ── Step 5: Focus Search Bar using Ctrl + Alt + / ───────────────────
         pyautogui.hotkey("ctrl", "alt", "/")
         time.sleep(0.3)
-
-        # Method C: Click directly into the Search input box
-        search_x = max(180, int(screen_w * 0.16))
-        search_y = max(160, int(screen_h * 0.20))
-        pyautogui.click(search_x, search_y)
-        time.sleep(0.3)
-
-        # Clear existing search text
-        pyautogui.hotkey("ctrl", "a")
-        time.sleep(0.1)
-        pyautogui.press("backspace")
-        time.sleep(0.2)
+        _release_all_modifier_keys()
 
         # ── Step 6: Enter the contact name ──────────────────────────────────
         _copy_to_clipboard(cleaned_person)
-        time.sleep(0.1)
+        time.sleep(0.15)
         pyautogui.hotkey("ctrl", "v")
+        _release_all_modifier_keys()
         time.sleep(2.0)  # Wait for search results to filter down
 
-        # ── Step 7: Select the first option (Enter + click first item) ───────
-        pyautogui.press("down")
-        time.sleep(0.2)
+        # ── Step 7: Open the top contact (Press Enter) ──────────────────────
         pyautogui.press("enter")
-        time.sleep(0.5)
+        time.sleep(1.8)  # Wait for chat conversation and message input to be ready
 
-        # Backup click: Click 1st contact card in results list directly
-        first_contact_x = search_x
-        first_contact_y = max(240, int(screen_h * 0.30))
-        pyautogui.click(first_contact_x, first_contact_y)
-        time.sleep(1.5)
-
-        # ── Step 8: Select the chat bar & paste message ──────────────────────
-        chat_x = max(300, int(screen_w * 0.55))
-        chat_y = max(200, int(screen_h * 0.95))
-        pyautogui.click(chat_x, chat_y)
-        time.sleep(0.3)
-
-        # Clear any draft and paste message
-        pyautogui.hotkey("ctrl", "a")
-        time.sleep(0.1)
+        # ── Step 8: Directly paste message into the open chat ───────────────
         _copy_to_clipboard(cleaned_msg)
-        time.sleep(0.1)
+        time.sleep(0.15)
         pyautogui.hotkey("ctrl", "v")
+        time.sleep(0.2)
+        _release_all_modifier_keys()
         time.sleep(0.3)
 
         # ── Step 9: Return status for confirmation prompt ────────────────────
@@ -279,9 +262,10 @@ def confirm_send_whatsapp_message(person: str = "") -> str:
         import pyautogui  # type: ignore
         pyautogui.FAILSAFE = False
 
-        time.sleep(0.3)
+        _release_all_modifier_keys()
         pyautogui.press("enter")
         time.sleep(0.3)
+        _release_all_modifier_keys()
     except Exception as e:
         logger.warning("Failed to send WhatsApp message: %s", e)
 
@@ -298,12 +282,14 @@ def cancel_whatsapp_message() -> str:
         import pyautogui  # type: ignore
         pyautogui.FAILSAFE = False
 
-        time.sleep(0.3)
+        _release_all_modifier_keys()
         pyautogui.hotkey("ctrl", "a")
         time.sleep(0.1)
         pyautogui.press("backspace")
-        time.sleep(0.2)
+        _release_all_modifier_keys()
     except Exception as e:
         logger.warning("Failed to clear WhatsApp draft: %s", e)
 
     return "Message cancelled. Who would you like to message and what should it say?"
+
+
