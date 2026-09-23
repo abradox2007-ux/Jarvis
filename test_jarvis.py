@@ -815,7 +815,7 @@ class RouterExtendedTests(unittest.TestCase):
 
     def test_whatsapp_handler_automation(self) -> None:
         from jarvis.handlers import whatsapp
-        with patch("webbrowser.open") as mock_browser:
+        with patch("jarvis.handlers.whatsapp._open_whatsapp_web_in_browser") as mock_open:
             with patch("time.sleep"):
                 with patch("pyautogui.press") as mock_press:
                     with patch("pyautogui.hotkey") as mock_hotkey:
@@ -823,7 +823,7 @@ class RouterExtendedTests(unittest.TestCase):
                             success, msg = whatsapp.stage_whatsapp_message("Charan Babu", "Good afternoon", wait_seconds=0.1)
                             self.assertTrue(success)
                             self.assertIn("prepared your message to Charan Babu", msg)
-                            mock_browser.assert_called_with("https://web.whatsapp.com")
+                            mock_open.assert_called_once()
                             # Verify person and message copied to clipboard
                             mock_clip.assert_any_call("Charan Babu")
                             mock_clip.assert_any_call("Good afternoon")

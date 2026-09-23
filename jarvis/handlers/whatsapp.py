@@ -36,19 +36,35 @@ def _force_window_foreground(hwnd: int) -> None:
         logger.debug("Force window foreground failed: %s", e)
 
 
+def _is_real_whatsapp_window(title: str) -> bool:
+    t = (title or "").strip().lower()
+    if not t:
+        return False
+    # Exclude code editors, IDEs, terminals, scripts, folder paths
+    excluded = (
+        ".py", ".json", ".txt", ".md", ".js", ".html",
+        "antigravity", "visual studio", "vscode", "code", "notepad",
+        "terminal", "powershell", "cmd.exe", "git",
+        "voice_assistant", "ac_voiceassistant"
+    )
+    if any(ex in t for ex in excluded):
+        return False
+    return "whatsapp" in t
+
+
 def _find_and_focus_whatsapp_window() -> bool:
     """
     Search if WhatsApp Web (or WhatsApp desktop app) is currently open in any window.
     Brings it to the foreground with Win32 focus lock bypass.
-    Only returns True if a window explicitly has 'whatsapp' in its title.
+    Only returns True if a window explicitly has 'whatsapp' in its title and is not a code editor.
     """
     try:
         import pygetwindow as gw  # type: ignore
         windows = gw.getAllWindows()
 
         for w in windows:
-            title = (w.title or "").strip().lower()
-            if "whatsapp" in title:
+            title = (w.title or "").strip()
+            if _is_real_whatsapp_window(title):
                 try:
                     if hasattr(w, "_hWnd"):
                         _force_window_foreground(w._hWnd)
@@ -66,17 +82,20 @@ def _find_and_focus_whatsapp_window() -> bool:
 
 
 def _open_whatsapp_web_in_browser() -> None:
-    """Open WhatsApp Web URL reliably in default browser."""
+    """Open WhatsApp Web URL reliably in default browser using Windows shell start."""
     url = "https://web.whatsapp.com"
+    logger.info("Opening WhatsApp Web in default browser: %s", url)
     try:
-        opened = webbrowser.open(url)
-        if not opened:
-            os.system(f'start "" "{url}"')
+        import subprocess
+        subprocess.Popen(["cmd.exe", "/c", "start", "", url], shell=False)
+        return
     except Exception:
-        try:
-            os.system(f'start "" "{url}"')
-        except Exception as e:
-            logger.warning("Could not launch browser for WhatsApp: %s", e)
+        pass
+
+    try:
+        webbrowser.open(url)
+    except Exception as e:
+        logger.warning("Could not launch browser for WhatsApp: %s", e)
 
 
 def _copy_to_clipboard(text: str) -> None:

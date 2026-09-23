@@ -50,7 +50,11 @@ SYSTEM_INSTRUCTION = (
     '   {"action": "remember", "fact": "fact or preference to remember", "category": "preference"|"fact"|"general"}\n'
     "14. To forget or delete a persistent memory item:\n"
     '   {"action": "forget", "query": "memory topic to forget"}\n'
-    "15. To run multiple actions in sequence:\n"
+    "15. To send or stage a WhatsApp message to a contact:\n"
+    '   {"action": "send_whatsapp_message", "person": "contact name", "message": "message to send"}\n'
+    "16. To play user's local music playlist:\n"
+    '   {"action": "play_playlist"}\n'
+    "17. To run multiple actions in sequence:\n"
     '   {"action": "multi", "commands": [array of action JSON objects]}\n'
     "\n"
     "Always reply in English. Keep any conversational 'reply' extremely brief and easy to read aloud by a text-to-speech engine."
