@@ -203,45 +203,60 @@ def stage_whatsapp_message(person: str, message: str, wait_seconds: float = 18.0
 
         # Ensure browser is in front
         _focus_browser_or_whatsapp()
-        time.sleep(0.3)
+        time.sleep(0.4)
 
         # Clear any active menu / modal
         pyautogui.press("esc")
         time.sleep(0.3)
 
-        # Focus Search in WhatsApp Web via global shortcut
+        # ── Step 5: Focus Search Bar ─────────────────────────────────────────
+        # Method A: Try WhatsApp Web New Chat shortcut (Ctrl+Alt+N) which auto-focuses search
+        pyautogui.hotkey("ctrl", "alt", "n")
+        time.sleep(0.4)
+
+        # Method B: WhatsApp Web Global Search shortcut (Ctrl+Alt+/)
         pyautogui.hotkey("ctrl", "alt", "/")
         time.sleep(0.3)
 
-        # Also click in the search area to ensure focus
-        search_x = max(180, int(screen_w * 0.18))
-        search_y = max(140, int(screen_h * 0.18))
+        # Method C: Click directly into the Search input box
+        search_x = max(180, int(screen_w * 0.16))
+        search_y = max(160, int(screen_h * 0.20))
         pyautogui.click(search_x, search_y)
-        time.sleep(0.2)
+        time.sleep(0.3)
 
         # Clear existing search text
         pyautogui.hotkey("ctrl", "a")
         time.sleep(0.1)
         pyautogui.press("backspace")
-        time.sleep(0.1)
+        time.sleep(0.2)
 
-        # ── Step 5: Enter the person's name ──────────────────────────────────
+        # ── Step 6: Enter the contact name ──────────────────────────────────
         _copy_to_clipboard(cleaned_person)
         time.sleep(0.1)
         pyautogui.hotkey("ctrl", "v")
         time.sleep(2.0)  # Wait for search results to filter down
 
-        # ── Step 6: Select the first option (Enter opens the chat) ───────────
+        # ── Step 7: Select the first option (Enter + click first item) ───────
+        pyautogui.press("down")
+        time.sleep(0.2)
         pyautogui.press("enter")
+        time.sleep(0.5)
+
+        # Backup click: Click 1st contact card in results list directly
+        first_contact_x = search_x
+        first_contact_y = max(240, int(screen_h * 0.30))
+        pyautogui.click(first_contact_x, first_contact_y)
         time.sleep(1.5)
 
-        # ── Step 7: Select the chat bar ──────────────────────────────────────
-        chat_x = max(300, int(screen_w * 0.50))
+        # ── Step 8: Select the chat bar & paste message ──────────────────────
+        chat_x = max(300, int(screen_w * 0.55))
         chat_y = max(200, int(screen_h * 0.95))
         pyautogui.click(chat_x, chat_y)
         time.sleep(0.3)
 
-        # ── Step 8: Enter the message into the chat bar ──────────────────────
+        # Clear any draft and paste message
+        pyautogui.hotkey("ctrl", "a")
+        time.sleep(0.1)
         _copy_to_clipboard(cleaned_msg)
         time.sleep(0.1)
         pyautogui.hotkey("ctrl", "v")
