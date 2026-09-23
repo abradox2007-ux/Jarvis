@@ -335,10 +335,15 @@ class CustomCommandManager:
                     os.startfile(target)
                 else:
                     subprocess.Popen(shlex.split(target))
-                return f"Launching {target}."
+                app_name = cmd.triggers[0].title() if cmd.triggers else Path(target.strip('"')).stem
+                # Clean prefix words like 'Open ' if in trigger name
+                if app_name.lower().startswith("open "):
+                    app_name = app_name[5:].strip()
+                return f"Opening {app_name}."
             except Exception as e:
                 logger.error("Failed to launch app %s: %s", target, e)
-                return f"Unable to launch application: {target}."
+                clean_name = cmd.triggers[0].title() if cmd.triggers else Path(target.strip('"')).stem
+                return f"Unable to launch {clean_name}."
 
         elif act == "folder":
             try:

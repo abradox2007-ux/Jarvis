@@ -6,7 +6,7 @@ import logging
 import os
 import re
 
-from jarvis.handlers import apps, diary, files, info, urls, ai, system, timer
+from jarvis.handlers import apps, diary, files, info, urls, ai, system, timer, whatsapp, media
 from jarvis.handlers.custom_commands import CustomCommandManager
 from jarvis.plugin_manager import PluginManager
 
@@ -160,6 +160,11 @@ def translate_tamil_to_english(cmd: str) -> str:
         target = t.replace("ஓபன்", "").strip()
         return f"open {target}"
 
+    # 7.5 Play Playlist (Tamil)
+    if any(k in t for k in ("பிளேலிஸ்ட்", "பிளேலிஸ்ட்டை")):
+        if any(w in t for w in ("ப்ளே", "போடு", "திற", "ஒலிபரப்பு", "ஸ்டார்ட்")):
+            return "play my playlist"
+
     # 8. Play song
     play_match = re.match(r"^(.*)\s+(ப்ளே பண்ணு|போடு|ஒலிபரப்பு|ப்ளே செய்|ப்ளே)$", t)
     if play_match:
@@ -181,6 +186,13 @@ def translate_tamil_to_english(cmd: str) -> str:
     if t.startswith("சர்ச்") or t.startswith("தேடு"):
         query = t.replace("சர்ச்", "").replace("தேடு", "").strip()
         return f"search {query}"
+
+    # 10. WhatsApp / Send Message (Tamil)
+    wa_tam_match = re.match(r"^(?:வாட்ஸ்அப்(?:பில்)?\s+)?(.+?)\s+(?:க்கு|என்பவருக்கு)\s+(.+?)\s*(?:என்று|ஆக)?\s*(?:செய்தி\s+)?அனுப்பு$", t)
+    if wa_tam_match:
+        person = wa_tam_match.group(1).strip()
+        msg = wa_tam_match.group(2).strip()
+        return f"send message to {person} saying {msg}"
 
     return t
 
@@ -226,6 +238,9 @@ class CommandRouter:
         self._weather_country: str = config.get("weather_country", "IN")
         self._custom_mgr = CustomCommandManager(config)
         self._plugin_mgr = PluginManager(config.get("plugins_dir", "./plugins"))
+        self._pending_whatsapp: dict[str, str] | None = None
+        self._whatsapp_wait_seconds: float = float(config.get("whatsapp_web_wait_seconds", 6.0))
+        self._local_playlist_dir: str = config.get("local_playlist_dir", r"C:\Users\Abinesh\Music\My_playlist")
 
     def route(self, command: str) -> str:
         """Dispatch *command* to the appropriate handler and return a response."""
@@ -263,6 +278,45 @@ class CommandRouter:
         cmd = translated_command.strip().lower()
         cmd = cmd.replace("dairy", "diary")
         logger.debug("Routing single command: %s (original: %s)", cmd, command)
+
+        # ── Check Pending WhatsApp Message Confirmation ──────────────────────
+        if self._pending_whatsapp:
+            pending = self._pending_whatsapp
+            clean_cmd = cmd.strip().rstrip(".!?,")
+            tokens = set(clean_cmd.split())
+
+            is_yes = (
+                clean_cmd in (
+                    "yes", "yeah", "yep", "sure", "send", "send it", "confirm", "go ahead",
+                    "send message", "send the message", "ஆம்", "சரி", "அனுப்பு", "send now",
+                    "ok send", "okay send", "please send", "yes please", "yes send", "yes send it",
+                    "ok", "okay", "do it", "yes do it", "send that", "send this", "alright",
+                    "yes jarvis", "send jarvis", "go for it", "proceed", "done", "fine", "it is fine",
+                    "all good", "good", "perfect", "send please", "pls send", "please send it"
+                )
+                or bool(tokens & {
+                    "yes", "yeah", "yep", "sure", "send", "confirm", "sendit", "ஆம்", "சரி",
+                    "அனுப்பு", "proceed", "ok", "okay", "done", "fine", "perfect", "alright"
+                })
+            )
+            is_no = (
+                clean_cmd in (
+                    "no", "cancel", "wrong", "don't send", "dont send", "stop", "nope",
+                    "இல்லை", "வேண்டாம்", "ரத்து", "no cancel", "cancel it", "do not send",
+                    "no don't send", "no dont send", "incorrect", "no wrong", "nevermind", "never mind"
+                )
+                or bool(tokens & {"no", "cancel", "wrong", "dont", "nope", "இல்லை", "வேண்டாம்", "ரத்து"})
+            )
+
+            if is_yes and not is_no:
+                self._pending_whatsapp = None
+                return whatsapp.confirm_send_whatsapp_message(pending.get("person", ""))
+            elif is_no:
+                self._pending_whatsapp = None
+                return whatsapp.cancel_whatsapp_message()
+            else:
+                # User provided a different command, clear pending state and continue routing
+                self._pending_whatsapp = None
 
         # ── Safety: no delete ────────────────────────────────────────────────
         if any(w in cmd for w in ("delete", "remove", "erase", "unlink")):
@@ -532,6 +586,94 @@ class CommandRouter:
             dst_f = match_move.group(2).strip()
             return files.move_file(src_f, dst_f, self._search_paths)
 
+        # ── WhatsApp / Send Message ──────────────────────────────────────────
+        # Pattern 1: "send (a)? (whatsapp)? message <msg> to <person>"
+        # e.g., send message "Good afternoon" to "Charan", send message Good afternoon to Charan
+        match_msg_to = re.match(
+            r"^(?:send\s+)?(?:a\s+)?(?:whatsapp\s+)?message\s+(?:saying\s+|that\s+)?['\"]?(.+?)['\"]?\s+to\s+['\"]?(.+?)['\"]?$",
+            translated_command,
+            re.IGNORECASE
+        )
+        if match_msg_to and not match_msg_to.group(1).strip().lower().startswith("to "):
+            msg_content = match_msg_to.group(1).strip().strip("'\"")
+            person_name = match_msg_to.group(2).strip().strip("'\"")
+            if msg_content and person_name:
+                success, response_txt = whatsapp.stage_whatsapp_message(
+                    person=person_name,
+                    message=msg_content,
+                    wait_seconds=self._whatsapp_wait_seconds
+                )
+                if success:
+                    self._pending_whatsapp = {"person": person_name, "message": msg_content}
+                return response_txt
+
+        # Pattern 2: "send (a)? (whatsapp)? message to <person> saying/that/content/: <msg>"
+        match_msg_to_person = re.match(
+            r"^(?:send\s+)?(?:a\s+)?(?:whatsapp\s+)?message\s+to\s+['\"]?(.+?)['\"]?\s*(?::|\s+(?:saying|that|content|is)\s+|\s+)\s*['\"]?(.+?)['\"]?$",
+            translated_command,
+            re.IGNORECASE
+        )
+        if match_msg_to_person:
+            person_name = match_msg_to_person.group(1).strip().strip("'\"")
+            msg_content = match_msg_to_person.group(2).strip().strip("'\"")
+            if person_name and msg_content:
+                success, response_txt = whatsapp.stage_whatsapp_message(
+                    person=person_name,
+                    message=msg_content,
+                    wait_seconds=self._whatsapp_wait_seconds
+                )
+                if success:
+                    self._pending_whatsapp = {"person": person_name, "message": msg_content}
+                return response_txt
+
+        # Pattern 3: "send <msg> to <person> on/via whatsapp"
+        match_send_on_wa = re.match(
+            r"^send\s+['\"]?(.+?)['\"]?\s+to\s+['\"]?(.+?)['\"]?\s+(?:on|via|in|through)\s+whatsapp$",
+            translated_command,
+            re.IGNORECASE
+        )
+        if match_send_on_wa:
+            msg_content = match_send_on_wa.group(1).strip().strip("'\"")
+            person_name = match_send_on_wa.group(2).strip().strip("'\"")
+            if msg_content and person_name:
+                success, response_txt = whatsapp.stage_whatsapp_message(
+                    person=person_name,
+                    message=msg_content,
+                    wait_seconds=self._whatsapp_wait_seconds
+                )
+                if success:
+                    self._pending_whatsapp = {"person": person_name, "message": msg_content}
+                return response_txt
+
+        # Pattern 4: "whatsapp <person> saying/that/: <msg>"
+        match_wa_direct = re.match(
+            r"^(?:whatsapp|message)\s+['\"]?([a-zA-Z0-9_\- .]+?)['\"]?\s*(?::|\s+(?:saying|that|content|is)\s+)\s*['\"]?(.+?)['\"]?$",
+            translated_command,
+            re.IGNORECASE
+        )
+        if match_wa_direct:
+            person_name = match_wa_direct.group(1).strip().strip("'\"")
+            msg_content = match_wa_direct.group(2).strip().strip("'\"")
+            if person_name and msg_content:
+                success, response_txt = whatsapp.stage_whatsapp_message(
+                    person=person_name,
+                    message=msg_content,
+                    wait_seconds=self._whatsapp_wait_seconds
+                )
+                if success:
+                    self._pending_whatsapp = {"person": person_name, "message": msg_content}
+                return response_txt
+
+        # Incomplete command fallbacks
+        if re.match(r"^(?:send\s+(?:a\s+)?(?:whatsapp\s+)?message\s+to|message|whatsapp)\s+['\"]?([a-zA-Z0-9_\- .]+?)['\"]?$", translated_command, re.I):
+            m = re.match(r"^(?:send\s+(?:a\s+)?(?:whatsapp\s+)?message\s+to|message|whatsapp)\s+['\"]?([a-zA-Z0-9_\- .]+?)['\"]?$", translated_command, re.I)
+            person_name = m.group(1).strip().strip("'\"") if m else ""
+            if person_name and person_name.lower() not in ("google", "youtube", "notepad", "notes", "diary"):
+                return f"What message would you like to send to {person_name}?"
+
+        if cmd in ("send message", "send a message", "send whatsapp message", "whatsapp message", "send a whatsapp message"):
+            return "Who would you like to send a message to, and what should it say?"
+
         # ── Search ───────────────────────────────────────────────────────────
         if cmd == "search" or cmd.startswith("search "):
             query = translated_command[len("search "):].strip()
@@ -543,6 +685,21 @@ class CommandRouter:
                 return f"Searching for '{query}' on Google."
             else:
                 return "What would you like me to search for?"
+
+        # ── Local Playlist ───────────────────────────────────────────────────
+        if (
+            cmd in (
+                "start my playlist", "play my playlist", "start playlist", "play playlist",
+                "open my playlist", "open playlist", "my playlist", "play my songs", "start my songs",
+                "resume my playlist", "resume playlist", "play songs", "start songs",
+                "shuffle my playlist", "shuffle playlist", "play random songs", "shuffle songs",
+                "play random songs from my playlist", "play random songs from playlist", "play my playlist in random",
+                "play random songs from the my_playlist folder", "play random songs from my_playlist folder"
+            )
+            or re.match(r"^(?:start|play|open|resume|shuffle)\s+(?:my\s+)?(?:random\s+)?playlists?(?:\s+in\s+random)?$", cmd)
+            or re.match(r"^(?:play|start|shuffle)\s+(?:random\s+)?(?:my\s+)?songs?(?:\s+from\s+(?:my\s+)?playlist)?$", cmd)
+        ):
+            return media.play_local_playlist(self._local_playlist_dir)
 
         # ── Play ─────────────────────────────────────────────────────────────
         if cmd == "play" or cmd.startswith("play "):
@@ -706,6 +863,10 @@ class CommandRouter:
                 return f"Playing '{song}' on YouTube."
             return "No song name provided."
 
+        # 4.1 Play local playlist
+        elif action in ("play_playlist", "start_playlist", "open_playlist"):
+            return media.play_local_playlist(self._local_playlist_dir)
+
         # 5. Search Google
         elif action == "search_google":
             query = action_dict.get("query")
@@ -782,6 +943,15 @@ class CommandRouter:
             if not mems:
                 return "No memories stored."
             return f"Memories: {'; '.join(m['content'] for m in mems[:5])}"
+
+        # 8.6 WhatsApp / Send Message
+        elif action in ("send_whatsapp_message", "send_message", "whatsapp_message"):
+            person = action_dict.get("person") or action_dict.get("to") or action_dict.get("contact", "")
+            message_txt = action_dict.get("message") or action_dict.get("text") or action_dict.get("content", "")
+            success, res = whatsapp.stage_whatsapp_message(person, message_txt, self._whatsapp_wait_seconds)
+            if success:
+                self._pending_whatsapp = {"person": person, "message": message_txt}
+            return res
 
         # 9. Time/Date/Weather info fallback
         elif action == "tell_time":

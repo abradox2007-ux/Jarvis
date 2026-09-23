@@ -692,6 +692,154 @@ class RouterExtendedTests(unittest.TestCase):
         self.assertTrue(store_res.get_json()["success"])
 
 
+    def test_whatsapp_message_routing_patterns(self) -> None:
+        from unittest.mock import MagicMock
+        with patch("jarvis.handlers.whatsapp.stage_whatsapp_message", return_value=(True, "I have prepared your message to Charan: 'Good afternoon'. Should I send it?")) as mock_stage:
+            # Pattern 1: send message <msg> to <person>
+            res1 = self.router.route("send message Good afternoon to Charan")
+            mock_stage.assert_called_with(person="Charan", message="Good afternoon", wait_seconds=18.0)
+            self.assertIn("prepared your message", res1)
+            self.assertIsNotNone(self.router._pending_whatsapp)
+
+            # Reset pending
+            self.router._pending_whatsapp = None
+            mock_stage.reset_mock()
+
+            # Pattern 1 with quotes: send message "Good afternoon" to "Charan"
+            res_quotes = self.router.route('send message "Good afternoon" to "Charan"')
+            mock_stage.assert_called_with(person="Charan", message="Good afternoon", wait_seconds=18.0)
+            self.assertIn("prepared your message", res_quotes)
+
+            self.router._pending_whatsapp = None
+            mock_stage.reset_mock()
+
+            # Pattern 2: send message to <person> saying <msg>
+            res2 = self.router.route("send message to Charan saying Good afternoon")
+            mock_stage.assert_called_with(person="Charan", message="Good afternoon", wait_seconds=18.0)
+            self.assertIn("prepared your message", res2)
+
+            self.router._pending_whatsapp = None
+            mock_stage.reset_mock()
+
+            # Pattern 2 with 'that': send a message to Charan that I will be late
+            res3 = self.router.route("send a message to Charan that I will be late")
+            mock_stage.assert_called_with(person="Charan", message="I will be late", wait_seconds=18.0)
+            self.assertIn("prepared your message", res3)
+
+            self.router._pending_whatsapp = None
+            mock_stage.reset_mock()
+
+            # Pattern 3: send <msg> to <person> on whatsapp
+            res4 = self.router.route("send Good afternoon to Charan on whatsapp")
+            mock_stage.assert_called_with(person="Charan", message="Good afternoon", wait_seconds=18.0)
+            self.assertIn("prepared your message", res4)
+
+            self.router._pending_whatsapp = None
+            mock_stage.reset_mock()
+
+            # Pattern 4: whatsapp <person> saying <msg>
+            res5 = self.router.route("whatsapp Charan saying Good afternoon")
+            mock_stage.assert_called_with(person="Charan", message="Good afternoon", wait_seconds=18.0)
+            self.assertIn("prepared your message", res5)
+
+    def test_whatsapp_confirmation_and_cancellation_flow(self) -> None:
+        with patch("jarvis.handlers.whatsapp.stage_whatsapp_message", return_value=(True, "I have prepared your message to Charan: 'Good afternoon'. Should I send it?")):
+            with patch("jarvis.handlers.whatsapp.confirm_send_whatsapp_message", return_value="Message sent to Charan.") as mock_confirm:
+                with patch("jarvis.handlers.whatsapp.cancel_whatsapp_message", return_value="Message cancelled. Who would you like to message and what should it say?") as mock_cancel:
+                    # 1. Stage message
+                    prep_res = self.router.route("send message Good afternoon to Charan")
+                    self.assertIn("prepared your message", prep_res)
+                    self.assertEqual(self.router._pending_whatsapp, {"person": "Charan", "message": "Good afternoon"})
+
+                    # 2. Confirm with "yes", "send it", "ok", "sure", "done", "fine"
+                    for affirmative_word in ("yes", "send it", "ok", "sure", "done", "fine", "okay", "send"):
+                        self.router._pending_whatsapp = {"person": "Charan", "message": "Good afternoon"}
+                        mock_confirm.reset_mock()
+                        res = self.router.route(affirmative_word)
+                        mock_confirm.assert_called_once_with("Charan")
+                        self.assertEqual(res, "Message sent to Charan.")
+                        self.assertIsNone(self.router._pending_whatsapp)
+
+                    # 3. Stage again and cancel with "no"
+                    self.router.route("send message Hello to Charan Babu")
+                    self.assertEqual(self.router._pending_whatsapp, {"person": "Charan Babu", "message": "Hello"})
+                    cancel_res = self.router.route("no")
+                    mock_cancel.assert_called_once()
+                    self.assertIn("Message cancelled", cancel_res)
+                    self.assertIsNone(self.router._pending_whatsapp)
+
+    def test_whatsapp_handler_automation(self) -> None:
+        from jarvis.handlers import whatsapp
+        with patch("webbrowser.open") as mock_browser:
+            with patch("time.sleep"):
+                with patch("pyautogui.press") as mock_press:
+                    with patch("pyautogui.hotkey") as mock_hotkey:
+                        with patch("jarvis.handlers.whatsapp._copy_to_clipboard") as mock_clip:
+                            success, msg = whatsapp.stage_whatsapp_message("Charan Babu", "Good afternoon", wait_seconds=0.1)
+                            self.assertTrue(success)
+                            self.assertIn("prepared your message to Charan Babu", msg)
+                            mock_browser.assert_called_with("https://web.whatsapp.com")
+                            # Verify person and message copied to clipboard
+                            mock_clip.assert_any_call("Charan Babu")
+                            mock_clip.assert_any_call("Good afternoon")
+
+                            # Test confirm
+                            confirm_out = whatsapp.confirm_send_whatsapp_message("Charan Babu")
+                            self.assertEqual(confirm_out, "Message sent to Charan Babu.")
+                            mock_press.assert_called_with("enter")
+
+                            # Test cancel
+                            cancel_out = whatsapp.cancel_whatsapp_message()
+                            self.assertIn("Message cancelled", cancel_out)
+
+
+    def test_local_playlist_commands(self) -> None:
+        with patch("jarvis.handlers.media.play_local_playlist", return_value="Playing 3 songs from your playlist.") as mock_play:
+            for phrase in (
+                "start my playlist",
+                "play my playlist",
+                "start playlist",
+                "play playlist",
+                "open my playlist",
+                "my playlist",
+                "play my songs",
+                "start my songs",
+                "shuffle my playlist",
+                "shuffle playlist",
+                "play random songs",
+                "play random songs from my playlist",
+            ):
+                mock_play.reset_mock()
+                res = self.router.route(phrase)
+                mock_play.assert_called_once()
+                self.assertEqual(res, "Playing 3 songs from your playlist.")
+
+    def test_media_handler_local_playlist(self) -> None:
+        from jarvis.handlers import media
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmppath = Path(tmpdir)
+            # Empty folder test
+            res_empty = media.play_local_playlist(str(tmppath))
+            self.assertIn("No songs found", res_empty)
+
+            # Create dummy audio files
+            (tmppath / "song1.mp3").write_bytes(b"dummy")
+            (tmppath / "song2.wav").write_bytes(b"dummy")
+            (tmppath / "song3.flac").write_bytes(b"dummy")
+
+            with patch("os.startfile") as mock_startfile:
+                res_songs = media.play_local_playlist(str(tmppath), shuffle=True)
+                self.assertEqual(res_songs, "Playing 3 songs from your playlist.")
+                mock_startfile.assert_called_once()
+                # Verify .m3u playlist exists and contains all the songs
+                m3u_file = tmppath / "playlist.m3u"
+                self.assertTrue(m3u_file.exists())
+                content = m3u_file.read_text(encoding="utf-8")
+                self.assertIn("song1.mp3", content)
+                self.assertIn("song2.wav", content)
+                self.assertIn("song3.flac", content)
+
+
 if __name__ == "__main__":
     unittest.main()
 
