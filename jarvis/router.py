@@ -517,6 +517,14 @@ class CommandRouter:
             entry_text = re.sub(r"^diary\b\s*[,.:|-]?\s*", "", translated_command, flags=re.IGNORECASE).strip()
             return diary.append_diary_entry(entry_text)
 
+        # ── Ollama / Local AI Status ──────────────────────────────────────────
+        if any(p in cmd for p in (
+            "check ollama", "check whether ollama is running", "check whether the ollama is running",
+            "check if ollama is running", "check if the ollama is running", "is ollama running",
+            "is the ollama running", "ollama status", "local ai status", "ai status"
+        )):
+            return ai.check_ollama_status(self._config)
+
         # ── Weather ──────────────────────────────────────────────────────────
         if "weather" in cmd:
             return info.tell_weather(self._weather_city, self._weather_country)

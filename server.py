@@ -105,8 +105,9 @@ def update_device(device_id: str, updates: dict) -> bool:
                     else:
                         _devices[device_id][k] = str(v)
             devices_copy = {k: dict(v) for k, v in _devices.items()}
-    broadcast_event("devices", devices_copy)
-    return True
+            broadcast_event("devices", devices_copy)
+            return True
+        return False
 
 
 def set_status(phase: str, message: str) -> None:

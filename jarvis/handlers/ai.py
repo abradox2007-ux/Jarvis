@@ -165,13 +165,29 @@ def call_ollama(prompt: str, config: dict) -> str | None:
                 "num_predict": 300
             }
         }
-        response = requests.post(f"{url.rstrip('/')}/api/chat", json=data, timeout=5)
+        response = requests.post(f"{url.rstrip('/')}/api/chat", json=data, timeout=12)
         if response.status_code == 200:
             res_json = response.json()
             return res_json["message"]["content"].strip()
     except Exception as e:
         logger.debug("Ollama API call failed: %s", e)
     return None
+
+
+def check_ollama_status(config: dict) -> str:
+    """Check if local Ollama server is running and which models are available."""
+    url = config.get("ollama_url") or "http://localhost:11434"
+    model = config.get("ollama_model") or "llama3.2"
+    try:
+        import requests
+        res = requests.get(f"{url.rstrip('/')}/api/tags", timeout=2)
+        if res.status_code == 200:
+            data = res.json()
+            models = [m.get("name") for m in data.get("models", [])]
+            return f"Ollama is running locally with {len(models)} model{'s' if len(models) != 1 else ''} available, using {model}."
+        return f"Ollama server responded with status code {res.status_code}."
+    except Exception:
+        return "Ollama is currently not running or not reachable on localhost."
 
 
 def generate_voice_response(prompt: str, config: dict) -> str:
@@ -211,10 +227,12 @@ def generate_voice_response(prompt: str, config: dict) -> str:
         prompt = re.sub(r"^ask (local|ollama|offline)\s+", "", prompt, flags=re.IGNORECASE)
         provider_order = ["ollama", "gemini", "openai"]
     else:
-        # Implicit keyword routing
+        # Implicit keyword routing & configuration preference
         coding_words = ["code", "python", "javascript", "html", "css", "programming", "function", "compile", "develop", "bug", "regex", "algorithm"]
         if any(w in p_lower for w in coding_words) and config.get("openai_api_key"):
             provider_order = ["openai", "gemini", "ollama"]
+        elif config.get("use_ollama") or config.get("ollama_enabled") or config.get("primary_ai_provider") == "ollama":
+            provider_order = ["ollama", "gemini", "openai"]
         else:
             provider_order = ["gemini", "openai", "ollama"]
 

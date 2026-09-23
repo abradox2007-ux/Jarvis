@@ -22,6 +22,7 @@
   "continuous_conversation": true,
   "follow_up_timeout": 8.0,
   "conversation_memory_turns": 10,
+  "use_ollama": true,
   "ollama_url": "http://localhost:11434",
   "ollama_model": "llama3.2",
   "plugins_dir": "./plugins",

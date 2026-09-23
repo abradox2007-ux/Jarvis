@@ -132,7 +132,7 @@ class RouterTests(unittest.TestCase):
                 self.assertIn("Opening notes.txt", result)
 
     def test_unknown_command(self) -> None:
-        with patch.dict(self.router._config, {"gemini_api_key": ""}):
+        with patch.dict(self.router._config, {"gemini_api_key": "", "openai_api_key": "", "use_ollama": False, "ollama_enabled": False}):
             result = self.router.route("do something random xyz")
             self.assertIn("didn't understand", result.lower())
 
@@ -167,6 +167,27 @@ class RouterTests(unittest.TestCase):
             result = custom_router.route("why is the sky blue")
             mock_ai.assert_called_once_with("why is the sky blue", custom_config)
             self.assertEqual(result, "Mocked Gemini response.")
+
+    def test_ollama_fallback_configured(self) -> None:
+        custom_config = dict(self.config)
+        custom_config["gemini_api_key"] = ""
+        custom_config["use_ollama"] = True
+        custom_router = CommandRouter(custom_config)
+
+        with patch("jarvis.router.ai.generate_voice_response", return_value='{"reply": "Mocked Ollama response."}') as mock_ai:
+            result = custom_router.route("why is the sky blue")
+            mock_ai.assert_called_once_with("why is the sky blue", custom_config)
+            self.assertEqual(result, "Mocked Ollama response.")
+
+    def test_ai_provider_priority_with_use_ollama(self) -> None:
+        from jarvis.handlers.ai import generate_voice_response
+        cfg = {"use_ollama": True, "gemini_api_key": "fake-key", "ollama_url": "http://localhost:11434", "ollama_model": "llama3.2"}
+        with patch("jarvis.handlers.ai.call_ollama", return_value='{"reply": "Ollama answered"}') as mock_ollama, \
+             patch("jarvis.handlers.ai.call_gemini") as mock_gemini:
+            res = generate_voice_response("what is quantum computing", cfg)
+            mock_ollama.assert_called_once()
+            mock_gemini.assert_not_called()
+            self.assertIn("Ollama answered", res)
 
     def test_smart_home_routing(self) -> None:
         custom_config = dict(self.config)
