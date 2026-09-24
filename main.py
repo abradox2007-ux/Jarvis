@@ -78,7 +78,13 @@ def main() -> None:
     follow_up_timeout = float(config.get("follow_up_timeout", 8.0))
     active_on_startup = bool(config.get("active_on_startup", True))
 
-    greeting = "Jarvis is ready. How can I help you?" if active_on_startup else "Jarvis is ready. Say Hey Jarvis followed by your command."
+    if config.get("startup_briefing", True):
+        from jarvis.handlers.info import generate_startup_briefing
+        greeting = generate_startup_briefing(config)
+    else:
+        user_title = config.get("user_title", "Sir")
+        greeting = f"Jarvis is ready, {user_title}. How may I assist you?" if active_on_startup else f"Jarvis is ready, {user_title}. Standing by."
+    
     speak(greeting)
     set_status("idle", greeting)
 
@@ -110,7 +116,8 @@ def main() -> None:
                         if sys.platform == "win32":
                             try:
                                 import winsound
-                                winsound.Beep(1046, 120)
+                                winsound.Beep(1046, 60)
+                                winsound.Beep(1318, 90)
                             except Exception:
                                 pass
                         set_status("listening", "Listening... speak your command now")
@@ -155,8 +162,9 @@ def main() -> None:
                             break
 
                         if not follow_up:
-                            # Silence timeout on this chunk: remain active and keep listening
-                            continue
+                            logger.info("Follow-up timeout (silence). Returning to standby.")
+                            set_status("idle", 'Standing by. Say "Hey Jarvis" when ready.')
+                            break
 
                         from jarvis.router import is_dismissal, is_termination
                         if is_termination(follow_up):

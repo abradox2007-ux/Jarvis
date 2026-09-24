@@ -342,9 +342,9 @@ class Listener:
                 chunk = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
                 prob1 = self._vad.get_speech_probability(chunk[:512])
                 prob2 = self._vad.get_speech_probability(chunk[512:])
-                is_speech_chunk = (prob1 >= self._vad_threshold) or (prob2 >= self._vad_threshold) or (chunk_rms > 25.0)
+                is_speech_chunk = (prob1 >= self._vad_threshold or prob2 >= self._vad_threshold) or (chunk_rms >= 35.0)
             else:
-                is_speech_chunk = chunk_rms > 20.0
+                is_speech_chunk = chunk_rms >= 35.0
 
             if is_speech_chunk:
                 if not speech_started:
@@ -360,25 +360,25 @@ class Listener:
                         break
                 else:
                     if time.time() - start_time > self._vad_initial_timeout:
-                        logger.info("Initial listening timeout (no speech detected).")
+                        logger.info("Listening timeout (no speech detected).")
                         break
 
         total_audio = b"".join(accumulated_frames)
         total_duration = len(total_audio) / (16000 * 2)  # 16kHz, 16-bit mono = 32000 bytes/sec
         total_rms = self._compute_rms(total_audio)
 
-        if total_duration >= 0.25 and (speech_started or total_rms > 15.0):
+        if total_duration >= 0.25 and (speech_started or total_rms >= 25.0):
             return sr.AudioData(total_audio, 16000, 2)
 
-        logger.debug("Captured audio too short or silent (duration: %.2fs, RMS: %.1f).", total_duration, total_rms)
+        logger.debug("Captured audio discarded as non-speech/silence (duration: %.2fs, RMS: %.1f).", total_duration, total_rms)
         return None
 
     def _transcribe(self, audio: sr.AudioData | None) -> str | None:
-        """Transcribe audio with primary engine and automatic fallback."""
+        """Transcribe audio with primary engine and anti-hallucination validation."""
         if audio is None:
             return None
 
-        # 1. Try Whisper if enabled (Ultra-fast greedy decoding)
+        # 1. Try Whisper if enabled
         if self._stt_engine == "whisper" and self._whisper_model_instance is not None:
             try:
                 import io
@@ -389,29 +389,31 @@ class Listener:
                     beam_size=1,
                     best_of=1,
                     temperature=0.0,
-                    vad_filter=False,
                     without_timestamps=True,
                     condition_on_previous_text=False
                 )
                 text_segments = []
                 for segment in segments:
-                    if segment.no_speech_prob < 0.88 and segment.text.strip():
+                    if segment.no_speech_prob < 0.85 and segment.text.strip():
                         text_segments.append(segment.text.strip())
                 text = " ".join(text_segments).strip()
 
-                # Filter out standard Whisper hallucinations on silence
+                # Filter out pure Whisper hallucinations on silence
                 if text:
                     cleaned_text = text.lower().strip().rstrip(".!?")
                     hallucinations = {
-                        "thank you", "thank you for watching", "you", 
-                        "please subscribe", "subscribe", "bye", "watching",
-                        "thank you.", "subtitles by", "translated by", "."
+                        "thank you", "thank you.", "thank you for watching", "thank you for watching.",
+                        "you", "you.", "please subscribe", "subscribe", "like and subscribe",
+                        "bye", "goodbye", "watching", "subtitles by", "translated by",
+                        "music", "applause", "silence", ".", "..", "...", "so", "oh", "yeah",
+                        "the end", "the end.", "thank you very much", "thank you so much",
+                        "thanks for watching", "thanks for watching."
                     }
-                    if cleaned_text not in hallucinations:
+                    if cleaned_text not in hallucinations and len(cleaned_text) > 1:
                         logger.info("Transcribed (Whisper): '%s'", text)
                         return text
                     else:
-                        logger.debug("Filtered Whisper hallucination: '%s'", text)
+                        logger.debug("Filtered Whisper hallucination/silence artifact: '%s'", text)
             except Exception as exc:
                 logger.warning("Whisper transcription failed: %s. Trying Google STT...", exc)
 
@@ -445,11 +447,12 @@ class Listener:
                     wav_data,
                     language="en",
                     beam_size=1,
+                    vad_filter=True,
                     without_timestamps=True,
                     condition_on_previous_text=False
                 )
-                text = " ".join([s.text.strip() for s in segments if s.text.strip()]).strip()
-                if text:
+                text = " ".join([s.text.strip() for s in segments if s.text.strip() and s.no_speech_prob < 0.65]).strip()
+                if text and len(text) > 1:
                     logger.info("Transcribed (Whisper fallback): '%s'", text)
                     return text
             except Exception:
@@ -545,34 +548,35 @@ class Listener:
                                 return text, cmd if cmd else None
                         return "", None
 
-            # ── 2. Acoustic Spotter Path (Acoustic STT Fallback) ───────────────
-            is_speech = False
-            if self._vad is not None:
-                f_chk = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
-                is_speech = (self._vad.get_speech_probability(f_chk[:512]) >= self._vad_threshold) or (chunk_energy > 60.0)
-            else:
-                is_speech = chunk_energy > 55.0
+            # ── 2. Acoustic Spotter Path (Only as Fallback when openWakeWord is not active) ───
+            if self._openwakeword_model is None:
+                is_speech = False
+                if self._vad is not None:
+                    f_chk = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
+                    is_speech = (self._vad.get_speech_probability(f_chk[:512]) >= self._vad_threshold) and (chunk_energy > 45.0)
+                else:
+                    is_speech = chunk_energy > 55.0
 
-            if is_speech:
-                spotter_frames.append(data)
-                spotter_speech_count += 1
-            else:
-                if spotter_speech_count > 0:
+                if is_speech:
                     spotter_frames.append(data)
+                    spotter_speech_count += 1
+                else:
+                    if spotter_speech_count > 0:
+                        spotter_frames.append(data)
 
-            # When speech ends or buffer reaches ~1.8s of voice, check transcription
-            if (spotter_speech_count >= 8 and (not is_speech or len(spotter_frames) >= 28)) or (len(spotter_frames) >= 36):
-                spotter_audio_bytes = b"".join(spotter_frames)
-                spotter_frames = []
-                spotter_speech_count = 0
+                # When speech ends or buffer reaches ~1.8s of voice, check transcription
+                if (spotter_speech_count >= 8 and (not is_speech or len(spotter_frames) >= 28)) or (len(spotter_frames) >= 36):
+                    spotter_audio_bytes = b"".join(spotter_frames)
+                    spotter_frames = []
+                    spotter_speech_count = 0
 
-                if len(spotter_audio_bytes) >= 16000:  # >= 0.5s of audio
-                    audio_obj = sr.AudioData(spotter_audio_bytes, 16000, 2)
-                    text = self._transcribe(audio_obj)
-                    if text and self.contains_wake_word(text):
-                        logger.info("Wake word confirmed via Acoustic Spotter: '%s'", text)
-                        cmd = self.extract_command_from_wake(text)
-                        return text, cmd if cmd else None
+                    if len(spotter_audio_bytes) >= 16000:  # >= 0.5s of audio
+                        audio_obj = sr.AudioData(spotter_audio_bytes, 16000, 2)
+                        text = self._transcribe(audio_obj)
+                        if text and self.contains_wake_word(text):
+                            logger.info("Wake word confirmed via Acoustic Spotter: '%s'", text)
+                            cmd = self.extract_command_from_wake(text)
+                            return text, cmd if cmd else None
 
     def capture_command(
         self,

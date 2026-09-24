@@ -328,6 +328,24 @@ def split_dot_commands(text: str) -> list[str]:
     return commands if commands else [text.strip()]
 
 
+def normalize_speech_command(cmd: str) -> str:
+    """Normalize common phonetic Speech-To-Text transcription typos."""
+    t = cmd.strip().lower()
+
+    # Media playback phonetic errors:
+    # "pass the song", "pass the music", "pass song", "paws the song", "pos the song", "pose the song", "boss the song"
+    t = re.sub(r"\b(?:pass|paws|pos|pose|post|boss|fast)\s+(?:the\s+|this\s+)?(song|music|playback|audio|video|track)\b", r"pause \1", t)
+
+    # App name phonetic errors:
+    t = re.sub(r"\b(?:not\s+pad|note\s+pad|not\s+bad)\b", "notepad", t)
+    t = re.sub(r"\b(?:u\s+tube|you\s+tube)\b", "youtube", t)
+    t = re.sub(r"\b(?:we\s+code|vs\s+code|v\s+s\s+code)\b", "vscode", t)
+    t = re.sub(r"\b(?:anti\s+gravity|anti\s+gravity\s+ide)\b", "antigravity", t)
+    t = re.sub(r"\b(?:screen\s+shot|screen\s+short)\b", "screenshot", t)
+
+    return t
+
+
 class CommandRouter:
     def __init__(self, config: dict) -> None:
         self._config = config
@@ -380,8 +398,13 @@ class CommandRouter:
                 return "Passkey authorization failed. Command cancelled."
 
         translated_command = translate_tamil_to_english(command)
-        cmd = translated_command.strip().lower()
+        cmd = normalize_speech_command(translated_command)
         cmd = cmd.replace("dairy", "diary")
+        # Strip trailing/leading punctuation
+        cmd = cmd.strip("?.!,: ")
+        # Strip assistant wake words and names
+        cmd = re.sub(r"^(?:hey\s+|hi\s+|hello\s+)?(?:jarvis\s*,?\s*)+", "", cmd).strip()
+        cmd = re.sub(r"[, ]+\bjarvis\b.*$", "", cmd).strip("?.!,: ")
         logger.debug("Routing single command: %s (original: %s)", cmd, command)
 
         # ── Check Pending UI Field Selection (Numbered Badges Overlay) ──────
@@ -550,14 +573,6 @@ class CommandRouter:
         if plugin_res is not None:
             return plugin_res
 
-        # ── LLM Orchestrator Mode (Only when explicitly enabled in config) ───
-        if self._config.get("orchestrator_mode", False) and (
-            self._config.get("use_ollama") or self._config.get("ollama_enabled") or self._config.get("gemini_api_key") or os.environ.get("GEMINI_API_KEY")
-        ):
-            llm_raw = ai.generate_voice_response(command, self._config)
-            if llm_raw and "I had trouble connecting" not in llm_raw:
-                return self.handle_llm_json_response(llm_raw)
-
         # ── Long-Term Memory (RAG) ───────────────────────────────────────────
         if cmd.startswith("remember that ") or cmd.startswith("remember "):
             fact = translated_command
@@ -585,31 +600,54 @@ class CommandRouter:
             items = [m["content"] for m in mems[:5]]
             return f"Here is what I remember: {'; '.join(items)}."
 
-        # ── System Controls (Volume, Media, Workstation) ─────────────────────
-        if cmd in ("mute volume", "unmute volume", "toggle mute"):
+        # ── System Controls (Volume, Media, Workstation, Screen) ─────────────
+        if cmd in ("mute volume", "unmute volume", "toggle mute", "mute audio", "unmute audio", "mute system", "unmute system"):
             return system.mute_volume()
-        if any(cmd == p or cmd.startswith(p + " ") for p in ("volume up", "increase volume", "louder", "turn it up")):
+        if any(cmd == p or cmd.startswith(p + " ") for p in ("volume up", "increase volume", "louder", "turn it up", "raise volume", "turn volume up")):
             return system.volume_up()
-        if any(cmd == p or cmd.startswith(p + " ") for p in ("volume down", "decrease volume", "lower volume", "quieter", "turn it down")):
+        if any(cmd == p or cmd.startswith(p + " ") for p in ("volume down", "decrease volume", "lower volume", "quieter", "turn it down", "turn volume down")):
             return system.volume_down()
         vol_match = re.search(r"(?:set\s+)?volume\s+(?:to\s+)?(\d+)(?:\s*%)?", cmd)
         if vol_match:
             return system.set_volume_percent(int(vol_match.group(1)))
 
-        if cmd in ("pause", "resume", "pause music", "resume music", "play pause", "media play", "media pause"):
+        # Media controls (pause/play/next/prev/stop)
+        if cmd in (
+            "pause", "resume", "pause music", "resume music", "play pause", "media play", "media pause",
+            "pause the song", "pause song", "pause the music", "pause playback", "pause the video",
+            "resume the song", "resume song", "resume the music", "resume playback", "resume the video",
+            "play the music", "unpause", "unpause music", "unpause the song"
+        ):
             return system.media_play_pause()
-        if cmd in ("next track", "next song", "skip track", "skip song"):
+        if cmd in ("next track", "next song", "skip track", "skip song", "next video", "play next track", "play next song"):
             return system.media_next()
-        if cmd in ("previous track", "previous song", "prev track", "prev song"):
+        if cmd in ("previous track", "previous song", "prev track", "prev song", "previous video", "play previous track", "play previous song"):
             return system.media_previous()
-        if cmd in ("stop music", "media stop"):
+        if cmd in ("stop music", "media stop", "stop playback", "stop song", "stop the music", "stop the song"):
             return system.media_stop()
 
-        if cmd in ("lock workstation", "lock screen", "lock computer", "lock pc", "lock windows"):
+        # Brightness
+        bright_match = re.search(r"(?:set\s+)?(?:screen\s+|monitor\s+|display\s+)?brightness\s+(?:to\s+)?(\d+)(?:\s*%)?", cmd)
+        if bright_match:
+            return system.set_brightness(int(bright_match.group(1)))
+
+        # Lock
+        if cmd in ("lock workstation", "lock screen", "lock computer", "lock pc", "lock windows", "lock laptop", "lock my pc", "lock my computer", "lock the screen", "lock the pc"):
             return system.lock_workstation()
-        if cmd in ("screenshot", "take screenshot", "capture screen", "take a screenshot"):
+
+        # Screenshot
+        if cmd in (
+            "screenshot", "take screenshot", "capture screen", "take a screenshot", "take the screenshot",
+            "screen shot", "take screen shot", "take a screen shot", "capture the screen", "take snapshot",
+            "capture snapshot", "save screenshot"
+        ):
             return system.take_screenshot()
-        if cmd in ("battery", "battery status", "battery level", "check battery", "power status"):
+
+        # Battery
+        if cmd in (
+            "battery", "battery status", "battery level", "check battery", "power status", "check power",
+            "how much battery", "what is the battery", "battery percentage", "battery life"
+        ):
             return system.get_battery_status()
 
         # ── Timers & Reminders ───────────────────────────────────────────────
@@ -1072,7 +1110,7 @@ class CommandRouter:
         return f"Sorry, I didn't understand '{command}'. Say 'help' for a list of commands."
 
     def handle_llm_json_response(self, response_str: str) -> str:
-        """Parse LLM JSON response and execute any structured tool actions."""
+        """Parse LLM JSON response, execute structured tool actions, and return in-character spoken dialogue."""
         try:
             from jarvis.handlers.ai import clean_and_parse_json
             parsed = clean_and_parse_json(response_str)
@@ -1080,22 +1118,30 @@ class CommandRouter:
             logger.warning("Failed to parse LLM response as JSON: %s (Response: %s)", e, response_str)
             return response_str
 
-        if "reply" in parsed:
-            return parsed["reply"]
-
         action = parsed.get("action")
-        if not action:
-            return response_str
+        custom_reply = parsed.get("reply") or parsed.get("spoken_response")
 
-        if action == "multi":
-            results = []
-            commands = parsed.get("commands", [])
-            for cmd in commands:
-                res = self.execute_single_action(cmd)
-                results.append(res)
-            return "Executed actions: " + " and ".join(results)
-        else:
-            return self.execute_single_action(parsed)
+        if action:
+            if action == "multi":
+                results = []
+                commands = parsed.get("commands", [])
+                for cmd in commands:
+                    res = self.execute_single_action(cmd)
+                    results.append(res)
+                if custom_reply:
+                    return custom_reply
+                return "Executed actions: " + " and ".join(results)
+            else:
+                action_res = self.execute_single_action(parsed)
+                # If LLM gave an in-character cultured reply, prefer it over robotic status strings
+                if custom_reply:
+                    return custom_reply
+                return action_res
+
+        if custom_reply:
+            return custom_reply
+
+        return response_str
 
     def execute_single_action(self, action_dict: dict) -> str:
         """Dispatch a single structured JSON command to its Python handler."""
@@ -1301,6 +1347,48 @@ class CommandRouter:
             instr = action_dict.get("instruction") or action_dict.get("target") or "copy that"
             return smart_copy.handle_smart_copy(command=instr, config=self._config, last_search=self._last_search_query)
 
+        # 8.12 Screenshot Capture
+        elif action in ("take_screenshot", "screenshot", "capture_screen", "screen_capture"):
+            return system.take_screenshot()
+
+        # 8.13 Media Playback Controls
+        elif action in ("media_control", "media_play_pause", "media_pause", "media_play", "pause_music", "resume_music", "next_track", "previous_track", "media_stop"):
+            cmd_type = str(action_dict.get("command", "")).lower().strip()
+            if action in ("media_pause", "pause_music") or cmd_type in ("pause", "resume", "play_pause", "toggle"):
+                return system.media_play_pause()
+            elif action in ("media_play", "resume_music") or cmd_type in ("play", "unpause"):
+                return system.media_play_pause()
+            elif action == "next_track" or cmd_type in ("next", "skip", "next_track"):
+                return system.media_next()
+            elif action == "previous_track" or cmd_type in ("prev", "previous", "previous_track", "prev_track"):
+                return system.media_previous()
+            elif action == "media_stop" or cmd_type in ("stop", "stop_media"):
+                return system.media_stop()
+            return system.media_play_pause()
+
+        # 8.14 Lock Workstation / Screen
+        elif action in ("lock_workstation", "lock_pc", "lock_screen", "lock_computer"):
+            return system.lock_workstation()
+
+        # 8.15 Screen Brightness
+        elif action in ("set_brightness", "brightness", "screen_brightness"):
+            percent = action_dict.get("percent") or action_dict.get("level", 75)
+            try:
+                return system.set_brightness(int(percent))
+            except Exception:
+                return system.set_brightness(75)
+
+        # 8.16 Battery Status
+        elif action in ("battery_status", "check_battery", "battery", "power_status"):
+            return system.get_battery_status()
+
+        # 8.17 Open File / View File
+        elif action in ("open_file", "view_file", "read_file"):
+            fname = action_dict.get("name") or action_dict.get("file") or action_dict.get("filename", "")
+            if fname:
+                return files.open_file(fname, self._search_paths)
+            return "No file name provided."
+
         # 9. Time/Date/Weather info fallback
         elif action in ("tell_time", "time"):
             from jarvis.handlers import info
@@ -1312,5 +1400,8 @@ class CommandRouter:
             from jarvis.handlers import info
             w_city = action_dict.get("city") or self._weather_city
             return info.tell_weather(w_city, self._weather_country)
+        elif action in ("system_briefing", "diagnostic_briefing", "briefing"):
+            from jarvis.handlers import info
+            return info.generate_startup_briefing(self._config)
 
         return f"Action '{action}' is not supported yet."

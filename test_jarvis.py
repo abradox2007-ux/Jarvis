@@ -212,8 +212,8 @@ class RouterTests(unittest.TestCase):
         # Spoken typo "u tube" corrected by LLM to play_song on youtube
         with patch("jarvis.router.ai.generate_voice_response", return_value='{"action": "play_song", "name": "interstellar"}') as mock_ai, \
              patch("webbrowser.open") as mock_browser:
-            res = router.route("play inter stellar on u tube")
-            mock_ai.assert_called_once_with("play inter stellar on u tube", cfg)
+            res = router.route("stream inter stellar on u tube")
+            mock_ai.assert_called_once_with("stream inter stellar on u tube", cfg)
             self.assertIn("Playing 'interstellar' on YouTube", res)
 
     def test_orchestrator_fast_path_bypass(self) -> None:
@@ -238,6 +238,41 @@ class RouterTests(unittest.TestCase):
                 result = custom_router.route("turn on the light")
                 mock_update.assert_called_once_with("light", {"state": "on"})
                 self.assertIn("successfully", result.lower())
+
+    def test_direct_media_and_system_controls(self) -> None:
+        with patch("jarvis.handlers.system.media_play_pause", return_value="Toggled media playback.") as mock_mp:
+            self.assertEqual(self.router.route("pause the song"), "Toggled media playback.")
+            self.assertEqual(self.router.route("pause the music"), "Toggled media playback.")
+            self.assertEqual(self.router.route("resume the song"), "Toggled media playback.")
+
+        with patch("jarvis.handlers.system.take_screenshot", return_value="Screenshot saved successfully.") as mock_ss:
+            self.assertEqual(self.router.route("take screenshot"), "Screenshot saved successfully.")
+            self.assertEqual(self.router.route("take a screenshot"), "Screenshot saved successfully.")
+            self.assertEqual(self.router.route("capture screen"), "Screenshot saved successfully.")
+
+        with patch("jarvis.handlers.system.lock_workstation", return_value="Locking workstation.") as mock_lock:
+            self.assertEqual(self.router.route("lock workstation"), "Locking workstation.")
+            self.assertEqual(self.router.route("lock pc"), "Locking workstation.")
+
+        with patch("jarvis.handlers.system.get_battery_status", return_value="Battery is at 85 percent and plugged in.") as mock_bat:
+            self.assertEqual(self.router.route("battery status"), "Battery is at 85 percent and plugged in.")
+            self.assertEqual(self.router.route("check battery"), "Battery is at 85 percent and plugged in.")
+
+    def test_llm_json_action_dispatch(self) -> None:
+        with patch("jarvis.handlers.system.take_screenshot", return_value="Screenshot saved successfully.") as mock_ss:
+            res = self.router.execute_single_action({"action": "take_screenshot"})
+            mock_ss.assert_called_once()
+            self.assertEqual(res, "Screenshot saved successfully.")
+
+        with patch("jarvis.handlers.system.media_play_pause", return_value="Toggled media playback.") as mock_mp:
+            res = self.router.execute_single_action({"action": "media_control", "command": "pause"})
+            mock_mp.assert_called_once()
+            self.assertEqual(res, "Toggled media playback.")
+
+        with patch("jarvis.handlers.system.set_brightness", return_value="Set screen brightness to 80 percent.") as mock_br:
+            res = self.router.execute_single_action({"action": "set_brightness", "percent": 80})
+            mock_br.assert_called_once_with(80)
+            self.assertEqual(res, "Set screen brightness to 80 percent.")
 
 
     def test_help_command(self) -> None:

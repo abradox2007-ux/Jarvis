@@ -32,3 +32,47 @@ def tell_weather(city: str, country: str) -> str:
         return f"The weather in {city}: {clean}."
     except Exception as exc:
         return f"Couldn't fetch weather right now. {exc}"
+
+
+def generate_startup_briefing(config: dict) -> str:
+    """Generate a crisp, in-character Iron Man style J.A.R.V.I.S. startup briefing."""
+    import datetime
+
+    title = config.get("user_title", "Sir")
+    now = datetime.datetime.now()
+    hour = now.hour
+
+    if 5 <= hour < 12:
+        salutation = "Good morning"
+    elif 12 <= hour < 17:
+        salutation = "Good afternoon"
+    elif 17 <= hour < 22:
+        salutation = "Good evening"
+    else:
+        salutation = "Online and at your service"
+
+    details = []
+
+    # 1. Battery status if available
+    try:
+        import psutil
+        battery = psutil.sensors_battery()
+        if battery:
+            plugged = "plugged in" if battery.power_plugged else "on battery power"
+            details.append(f"Power levels are at {battery.percent}% ({plugged})")
+    except Exception:
+        pass
+
+    # 2. Check pending diary / tasks
+    try:
+        from jarvis.handlers.diary import DIARY_PATH
+        if DIARY_PATH.exists():
+            content = DIARY_PATH.read_text(encoding="utf-8", errors="ignore").strip()
+            today_str = now.strftime("%Y-%m-%d")
+            if today_str in content:
+                details.append("You have active notes recorded in your diary for today")
+    except Exception:
+        pass
+
+    detail_str = f" {'. '.join(details)}. " if details else " "
+    return f"{salutation}, {title}. All core systems are operational.{detail_str}How may I assist you?"
