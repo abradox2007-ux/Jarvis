@@ -6,9 +6,10 @@ import logging
 import os
 import re
 
-from jarvis.handlers import apps, diary, files, info, urls, ai, system, timer, whatsapp, media
+from jarvis.handlers import apps, diary, files, info, urls, ai, system, timer, whatsapp, media, smart_copy, ui_detector
 from jarvis.handlers.custom_commands import CustomCommandManager
 from jarvis.plugin_manager import PluginManager
+from jarvis.ui.overlay import get_badge_overlay
 
 logger = logging.getLogger(__name__)
 
@@ -23,11 +24,50 @@ HELP_TEXT = (
 DISMISSAL_PHRASES = {
     "stop", "bye", "goodbye", "good bye", "go to sleep", "sleep", "sleep now",
     "that's all", "thats all", "that is all", "thank you", "thanks", "thank you jarvis",
-    "nevermind", "never mind", "exit", "cancel", "standby", "stand by", "close", "mute",
+    "nevermind", "never mind", "cancel", "standby", "stand by", "close", "mute",
     "stop listening", "stop now", "please stop", "jarvis stop", "stop jarvis", "ok stop",
     "okay stop", "jarvis go to sleep", "jarvis sleep", "jarvis standby", "jarvis mute",
     "நன்றி", "போதும்", "முடிந்தது", "நிறுத்து"
 }
+
+TERMINATION_PHRASES = {
+    "kill", "terminate", "kill jarvis", "terminate jarvis",
+    "kill terminal", "terminate terminal", "close terminal", "exit terminal", "quit terminal",
+    "kill assistant", "terminate assistant", "kill the terminal", "terminate the terminal",
+    "kill the assistant", "terminate the assistant",
+    "kill the whole jarvis", "terminate the whole jarvis", "terminate whole jarvis", "kill whole jarvis",
+    "kill jarvis to the core", "terminate jarvis to the core", "kill to the core", "terminate to the core",
+    "shutdown jarvis", "shut down jarvis", "shutdown assistant", "shut down assistant",
+    "shutdown system", "shut down system",
+    "kill process", "terminate process", "exit jarvis", "quit jarvis",
+    "exit program", "quit program", "kill program", "terminate program",
+    "exit assistant", "quit assistant", "shutdown", "shut down", "quit", "exit",
+    "jarvis kill", "jarvis terminate", "jarvis shutdown", "jarvis shut down", "jarvis quit", "jarvis exit",
+    "முழுமையாக நிறுத்து", "முழுசா நிறுத்து", "டெர்மினல் மூடு", "டெர்மினலை மூடு",
+    "ஜார்விஸை நிறுத்து", "ஜார்விஸ் நிறுத்து", "கில் பண்ணு", "டெர்மினேட் பண்ணு", "முழுசா கில் பண்ணு"
+}
+
+
+def is_termination(command: str) -> bool:
+    """Return True if command requests complete termination of Jarvis and the terminal process."""
+    if not command:
+        return False
+    cmd = command.strip().lower().rstrip(".!?,")
+    if cmd in TERMINATION_PHRASES:
+        return True
+
+    prefixes = (
+        "kill jarvis", "terminate jarvis", "shutdown jarvis", "shut down jarvis",
+        "kill assistant", "terminate assistant", "kill terminal", "terminate terminal",
+        "kill the terminal", "terminate the terminal", "kill the assistant", "terminate the assistant",
+        "kill the whole jarvis", "terminate the whole jarvis", "kill whole jarvis", "terminate whole jarvis",
+        "kill to the core", "terminate to the core", "kill jarvis to the core", "terminate jarvis to the core",
+        "kill process", "terminate process", "kill program", "terminate program", "exit program", "quit program",
+        "exit jarvis", "quit jarvis", "exit assistant", "quit assistant"
+    )
+    if any(cmd == p or cmd.startswith(p + " ") or cmd.startswith(p + ".") for p in prefixes):
+        return True
+    return False
 
 
 def is_dismissal(command: str) -> bool:
@@ -38,6 +78,9 @@ def is_dismissal(command: str) -> bool:
 
     # Exclude specific targeted controls from accidental dismissal
     if cmd in ("stop music", "stop media", "stop song", "stop playback", "stop timer", "stop timers", "cancel timer", "cancel timers"):
+        return False
+
+    if is_termination(cmd):
         return False
 
     if cmd in DISMISSAL_PHRASES:
@@ -52,6 +95,34 @@ def is_dismissal(command: str) -> bool:
     if any(cmd.endswith(suffix) for suffix in ("stop", "go to sleep", "standby", "stand by", "sleep", "mute")):
         return True
     return False
+
+
+def parse_choice_number(text: str) -> int | None:
+    """Parse verbal or numeric choice from user response (e.g. 'one', 'number 2', 'இரண்டு')."""
+    if not text:
+        return None
+    t = text.lower().strip().rstrip(".!?,")
+    words = {
+        "1": 1, "one": 1, "first": 1, "1st": 1, "ஒன்று": 1, "ஒன்னு": 1, "முதல்": 1,
+        "2": 2, "two": 2, "second": 2, "2nd": 2, "இரண்டு": 2, "ரெண்டு": 2, "இரண்டாவது": 2,
+        "3": 3, "three": 3, "third": 3, "3rd": 3, "மூன்று": 3, "மூணு": 3, "மூன்றாவது": 3,
+        "4": 4, "four": 4, "fourth": 4, "4th": 4, "நான்கு": 4, "நாலு": 4, "நான்காவது": 4,
+        "5": 5, "five": 5, "fifth": 5, "5th": 5, "ஐந்து": 5, "அஞ்சு": 5, "ஐந்தாவது": 5,
+        "6": 6, "six": 6, "sixth": 6, "6th": 6, "ஆறு": 6,
+        "7": 7, "seven": 7, "seventh": 7, "7th": 7, "ஏழு": 7,
+        "8": 8, "eight": 8, "eighth": 8, "8th": 8, "எட்டு": 8,
+        "9": 9, "nine": 9, "ninth": 9, "9th": 9, "ஒன்பது": 9,
+    }
+    if t in words:
+        return words[t]
+    m = re.search(r"\b(?:number|bar|option|choose|select|box|எண்|பார்|நம்பர்)?\s*(\d+|one|two|three|four|five|six|seven|eight|nine|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth)\b", t)
+    if m:
+        w = m.group(1).lower()
+        if w in words:
+            return words[w]
+        if w.isdigit():
+            return int(w)
+    return None
 
 
 def translate_tamil_to_english(cmd: str) -> str:
@@ -87,6 +158,10 @@ def translate_tamil_to_english(cmd: str) -> str:
 
     for tam, eng in tamil_to_eng_nouns.items():
         t = t.replace(tam, eng)
+
+    # 0. Terminate / Kill (Tamil)
+    if any(w in t for w in ("முழுமையாக நிறுத்து", "முழுசா நிறுத்து", "டெர்மினல் மூடு", "டெர்மினலை மூடு", "ஜார்விஸை நிறுத்து", "கில் பண்ணு", "டெர்மினேட் பண்ணு", "முழுசா கில் பண்ணு")):
+        return "terminate jarvis"
 
     # 1. Help / Info commands
     if any(w in t for w in ("உதவி", "வழிகாட்டி", "கட்டளைகள்", "வழிமுறை")):
@@ -141,6 +216,31 @@ def translate_tamil_to_english(cmd: str) -> str:
         src_f = move_match.group(1).strip()
         dst_f = move_match.group(3).strip()
         return f"move file {src_f} to {dst_f}"
+
+    # 5.9 Smart Text Copy / Clipboard (Tamil)
+    if any(k in t for k in ("காப்பி செய்", "நகலெடு", "காப்பி பண்ணு", "கிளிப்போர்டுக்கு காப்பி செய்")):
+        if not any(f in t for f in ("ஃபைலை", "கோப்பை", "file")):
+            if "முதல் பத்தி" in t or "முதல் பத்தியை" in t:
+                return "copy the first paragraph"
+            if "இரண்டாவது பத்தி" in t or "இரண்டாவது பத்தியை" in t:
+                return "copy the second paragraph"
+            if "கடைசி பத்தி" in t or "கடைசி பத்தியை" in t:
+                return "copy the last paragraph"
+            if "முதல் வரி" in t or "முதல் வரியை" in t:
+                return "copy the first line"
+            if "கடைசி வரி" in t or "கடைசி வரியை" in t:
+                return "copy the last line"
+            if "மின்னஞ்சல்" in t or "மின்னஞ்சலை" in t:
+                return "copy the email"
+            if "குறியீடு" in t or "கோட்" in t:
+                return "copy the code"
+            if "இணைப்பு" in t or "லிங்க்" in t:
+                return "copy the link"
+            return "copy that"
+
+    # 5.10 UI Input selector / Search bar (Tamil)
+    if any(k in t for k in ("டைப் பண்ணு", "டைப்பிங் பார்", "சர்ச் பார்", "தேடல் பார்", "செலக்ட் பண்ணு")):
+        return "select typing bar"
 
     # 6. Create file
     create_match = re.match(r"^(.*)\s+(கோப்பு உருவாக்கு|ஃபைல் உருவாக்கு|உருவாக்கு)$", t)
@@ -242,6 +342,10 @@ class CommandRouter:
         self._pending_message_state: dict[str, str] | None = None
         self._whatsapp_wait_seconds: float = float(config.get("whatsapp_web_wait_seconds", 18.0))
         self._local_playlist_dir: str = config.get("local_playlist_dir", r"C:\Users\Abinesh\Music\My_playlist")
+        self._pending_ui_fields: list[dict] | None = None
+        self._pending_dictation_field: dict | None = None
+        self._pending_search_action: bool = False
+        self._last_search_query: str | None = None
 
     def route(self, command: str) -> str:
         """Dispatch *command* to the appropriate handler and return a response."""
@@ -279,6 +383,55 @@ class CommandRouter:
         cmd = translated_command.strip().lower()
         cmd = cmd.replace("dairy", "diary")
         logger.debug("Routing single command: %s (original: %s)", cmd, command)
+
+        # ── Check Pending UI Field Selection (Numbered Badges Overlay) ──────
+        if self._pending_ui_fields:
+            fields = self._pending_ui_fields
+            clean_cmd = cmd.strip().rstrip(".!?,")
+            if clean_cmd in ("no", "cancel", "stop", "nevermind", "never mind", "dismiss", "close", "இல்லை", "வேண்டாம்", "ரத்து"):
+                self._pending_ui_fields = None
+                self._pending_search_action = False
+                try:
+                    get_badge_overlay().hide_badges()
+                except Exception:
+                    pass
+                return "Cancelled selection."
+
+            choice_num = parse_choice_number(command) or parse_choice_number(translated_command)
+            if choice_num is not None:
+                chosen_field = next((f for f in fields if f.get("index") == choice_num), None)
+                if chosen_field:
+                    try:
+                        get_badge_overlay().hide_badges()
+                    except Exception:
+                        pass
+                    ui_detector.focus_and_click_field(chosen_field)
+                    self._pending_ui_fields = None
+                    self._pending_dictation_field = chosen_field
+                    return f"Selected typing bar {choice_num}. What would you like to type?"
+                else:
+                    return f"Please choose a number between 1 and {len(fields)}."
+            else:
+                return f"Please select a number between 1 and {len(fields)}, or say cancel."
+
+        # ── Check Pending UI Dictation ───────────────────────────────────────
+        if self._pending_dictation_field:
+            field = self._pending_dictation_field
+            clean_cmd = cmd.strip().rstrip(".!?,")
+            if clean_cmd in ("no", "cancel", "stop", "nevermind", "never mind", "dismiss", "இல்லை", "வேண்டாம்", "ரத்து"):
+                self._pending_dictation_field = None
+                self._pending_search_action = False
+                return "Cancelled typing."
+
+            press_enter = self._pending_search_action
+            self._pending_dictation_field = None
+            self._pending_search_action = False
+
+            dictated_text = command.strip()
+            ui_detector.type_into_field(field, dictated_text, press_enter=press_enter)
+            if press_enter:
+                return f"Searched for '{dictated_text}'."
+            return "Typed into field."
 
         # ── Check Pending Multi-Turn Message State ───────────────────────────
         if self._pending_message_state:
@@ -365,6 +518,10 @@ class CommandRouter:
         if any(w in cmd for w in ("delete", "remove", "erase", "unlink")):
             return "Delete commands are not supported for safety reasons."
 
+        # ── Core Termination: Kill / Terminate / Exit ────────────────────────
+        if is_termination(cmd) or is_termination(command) or is_termination(translated_command):
+            return system.terminate_jarvis()
+
         # ── Follow-up Dismissal / Standby ────────────────────────────────────
         if is_dismissal(cmd):
             if any(w in cmd for w in ("thank", "thanks", "நன்றி")):
@@ -392,6 +549,14 @@ class CommandRouter:
         plugin_res = self._plugin_mgr.dispatch(command, self._config) or self._plugin_mgr.dispatch(translated_command, self._config)
         if plugin_res is not None:
             return plugin_res
+
+        # ── LLM Orchestrator Mode (Only when explicitly enabled in config) ───
+        if self._config.get("orchestrator_mode", False) and (
+            self._config.get("use_ollama") or self._config.get("ollama_enabled") or self._config.get("gemini_api_key") or os.environ.get("GEMINI_API_KEY")
+        ):
+            llm_raw = ai.generate_voice_response(command, self._config)
+            if llm_raw and "I had trouble connecting" not in llm_raw:
+                return self.handle_llm_json_response(llm_raw)
 
         # ── Long-Term Memory (RAG) ───────────────────────────────────────────
         if cmd.startswith("remember that ") or cmd.startswith("remember "):
@@ -541,6 +706,39 @@ class CommandRouter:
         if cmd.startswith("create file "):
             name = translated_command[len("create file "):].strip()
             return files.create_file(name)
+
+        # ── Smart Contextual / Semantic Text Copy to Clipboard ──────────────
+        if re.search(r"\b(?:copy|clipboard)\b", cmd) or any(k in cmd for k in ("நகலெடு", "காப்பி")):
+            is_file_op = bool(re.match(r"^(?:please\s+|can\s+you\s+)?copy\s+(?:file\s+)?[a-zA-Z0-9_\- .]+\s+(?:to|as|and\s+paste)\s+[a-zA-Z0-9_\- .]+$", cmd)) and not any(k in cmd for k in ("clipboard", "clip board"))
+            is_notes_op = bool(re.match(r"^(?:please\s+|can\s+you\s+)?copy\s+(?:this\s+)?(?:to|in|into)\s+([a-zA-Z0-9_\- .]+?)(?:\s+(?:that|saying|:|content|is)\s+|\s*:\s*|\s+)(.+)$", cmd)) and not any(k in cmd for k in ("clipboard", "clip board"))
+            if not is_file_op and not is_notes_op:
+                return smart_copy.handle_smart_copy(command=translated_command, config=self._config, last_search=self._last_search_query)
+
+        # ── UI Input Field Selector & Overlay ("select", "search", "dial", "type") ──
+        if cmd in (
+            "select", "dial", "type", "search bar", "type bar", "typing bar",
+            "select typing bar", "select search bar", "choose typing bar", "choose search bar",
+            "focus typing bar", "focus search bar", "input bar", "select bar", "choose bar",
+            "டைப் பண்ணு", "சர்ச் பார்", "தேடல் பார்", "டைப்பிங் பார்", "செலக்ட் பண்ணு", "டயல்"
+        ):
+            fields = ui_detector.find_input_fields()
+            is_search = "search" in cmd or "தேடு" in cmd or "தேடல்" in cmd
+            self._pending_search_action = is_search
+
+            if not fields:
+                return "No typing or search bar detected on the active window."
+            elif len(fields) == 1:
+                ui_detector.focus_and_click_field(fields[0])
+                self._pending_dictation_field = fields[0]
+                self._pending_ui_fields = None
+                return "Typing bar selected. What would you like to type?"
+            else:
+                self._pending_ui_fields = fields
+                try:
+                    get_badge_overlay().show_badges(fields)
+                except Exception as e:
+                    logger.debug("Overlay display failed: %s", e)
+                return f"Found {len(fields)} typing bars. Which number should I choose?"
 
         # ── Write / Add / Take notes to specific file ────────────────────────
         # 1. "take notes for/in/to <filename> <content>" / "takes notes for <filename> <content>"
@@ -781,6 +979,7 @@ class CommandRouter:
         if cmd == "search" or cmd.startswith("search "):
             query = translated_command[len("search "):].strip()
             if query:
+                self._last_search_query = query
                 import urllib.parse
                 import webbrowser
                 url = f"https://www.google.com/search?q={urllib.parse.quote(query)}"
@@ -904,8 +1103,12 @@ class CommandRouter:
         if not action:
             return "No action specified."
 
+        # 0. Core Termination
+        if action in ("terminate_jarvis", "kill_jarvis", "kill_assistant", "shutdown_jarvis", "terminate", "kill", "exit"):
+            return system.terminate_jarvis()
+
         # 1. Smart home control
-        if action == "control_device":
+        elif action == "control_device":
             device = action_dict.get("device")
             state = action_dict.get("state")
             temp = action_dict.get("temperature")
@@ -1056,15 +1259,58 @@ class CommandRouter:
                 self._pending_whatsapp = {"person": person, "message": message_txt}
             return res
 
+        # 8.7 Open URL / Website
+        elif action in ("open_url", "open_website"):
+            url_target = action_dict.get("url") or action_dict.get("target") or action_dict.get("name", "")
+            return urls.open_url(url_target, self._url_aliases)
+
+        # 8.8 Timer / Countdown
+        elif action in ("set_timer", "create_timer", "timer"):
+            secs = action_dict.get("duration_seconds") or action_dict.get("seconds")
+            label = action_dict.get("label", "Timer")
+            if secs is not None:
+                try:
+                    return timer.create_timer(int(secs), str(label))
+                except Exception:
+                    pass
+            return "Could not set timer with specified duration."
+
+        # 8.9 System Volume Control
+        elif action in ("system_volume", "volume_control", "volume"):
+            cmd_type = action_dict.get("command", "").lower()
+            lvl = action_dict.get("level")
+            if cmd_type == "mute" or action_dict.get("mute"):
+                return system.mute_volume()
+            elif cmd_type == "up":
+                return system.volume_up()
+            elif cmd_type == "down":
+                return system.volume_down()
+            elif lvl is not None:
+                try:
+                    return system.set_volume_percent(int(lvl))
+                except Exception:
+                    pass
+            return "Adjusted volume."
+
+        # 8.10 Check Ollama / AI Status
+        elif action in ("check_ollama", "ollama_status", "ai_status"):
+            return ai.check_ollama_status(self._config)
+
+        # 8.11 Smart Text / Semantic Copy
+        elif action in ("smart_copy", "copy_text", "copy_content"):
+            instr = action_dict.get("instruction") or action_dict.get("target") or "copy that"
+            return smart_copy.handle_smart_copy(command=instr, config=self._config, last_search=self._last_search_query)
+
         # 9. Time/Date/Weather info fallback
-        elif action == "tell_time":
+        elif action in ("tell_time", "time"):
             from jarvis.handlers import info
             return info.tell_time()
-        elif action == "tell_date":
+        elif action in ("tell_date", "date"):
             from jarvis.handlers import info
             return info.tell_date()
-        elif action == "tell_weather":
+        elif action in ("tell_weather", "weather"):
             from jarvis.handlers import info
-            return info.tell_weather(self._weather_city, self._weather_country)
+            w_city = action_dict.get("city") or self._weather_city
+            return info.tell_weather(w_city, self._weather_country)
 
         return f"Action '{action}' is not supported yet."

@@ -21,6 +21,9 @@ _last_gemini_key = None
 SYSTEM_INSTRUCTION = (
     "You are a helpful smart voice assistant named Jarvis.\n"
     "Your job is to either respond conversationally or choose a specific action tool to run.\n"
+    "Voice Transcription Note: User input is transcribed from speech and may contain phonetic errors or minor typos "
+    "(e.g. 'not pad' -> 'notepad', 'we code' -> 'vscode', 'u tube' -> 'youtube', 'chrome browser' -> 'chrome', "
+    "'anti gravity' -> 'antigravity'). Correct these intelligently to the intended target.\n"
     "You MUST respond ONLY with a single JSON object in one of the following formats (no markdown, no backticks, no text around it):\n"
     "1. To reply to general queries or conversation:\n"
     '   {"reply": "Your short spoken response here (under 2 sentences, no markdown, no symbols, list formats or bullet points)."}\n'
@@ -30,32 +33,46 @@ SYSTEM_INSTRUCTION = (
     '   {"action": "create_file", "name": "filename"}\n'
     "4. To open an application:\n"
     '   {"action": "open_app", "name": "appname"}\n'
-    "5. To play a song on YouTube:\n"
+    "5. To open a website or URL:\n"
+    '   {"action": "open_url", "url": "website_or_url"}\n'
+    "6. To play a song on YouTube:\n"
     '   {"action": "play_song", "name": "songname"}\n'
-    "6. To search on Google:\n"
+    "7. To search on Google:\n"
     '   {"action": "search_google", "query": "search query"}\n'
-    "7. To read the diary:\n"
+    "8. To read the diary:\n"
     '   {"action": "read_diary"}\n'
-    "8. To create or teach a new custom voice command shortcut:\n"
+    "9. To create or teach a new custom voice command shortcut:\n"
     '   {"action": "add_custom_command", "trigger": "voice phrase trigger", "type": "say"|"url"|"app"|"folder"|"file"|"cmd", "target": "action target or reply", "secure": false}\n'
-    "9. To write or take notes in a specific named file:\n"
+    "10. To write or take notes in a specific named file:\n"
     '   {"action": "write_file", "file": "filename", "text": "notes/content to write"}\n'
-    "10. To rename an existing file:\n"
+    "11. To rename an existing file:\n"
     '   {"action": "rename_file", "old_name": "current_filename", "new_name": "new_filename"}\n'
-    "11. To copy an existing file:\n"
+    "12. To copy an existing file:\n"
     '   {"action": "copy_file", "source": "source_filename", "destination": "destination_filename"}\n'
-    "12. To cut / move an existing file:\n"
+    "13. To cut / move an existing file:\n"
     '   {"action": "move_file", "source": "source_filename", "destination": "destination_filename"}\n'
-    "13. To store a persistent user fact or preference in long-term memory:\n"
+    "14. To store a persistent user fact or preference in long-term memory:\n"
     '   {"action": "remember", "fact": "fact or preference to remember", "category": "preference"|"fact"|"general"}\n'
-    "14. To forget or delete a persistent memory item:\n"
+    "15. To forget or delete a persistent memory item:\n"
     '   {"action": "forget", "query": "memory topic to forget"}\n'
-    "15. To send or stage a WhatsApp message to a contact:\n"
+    "16. To send or stage a WhatsApp message to a contact:\n"
     '   {"action": "send_whatsapp_message", "person": "contact name", "message": "message to send"}\n'
-    "16. To play user's local music playlist:\n"
+    "17. To play user's local music playlist:\n"
     '   {"action": "play_playlist"}\n'
-    "17. To run multiple actions in sequence:\n"
+    "18. To check weather:\n"
+    '   {"action": "tell_weather", "city": "optional_city"}\n'
+    "19. To check current time or date:\n"
+    '   {"action": "tell_time"} or {"action": "tell_date"}\n'
+    "20. To set a timer or reminder:\n"
+    '   {"action": "set_timer", "duration_seconds": 300, "label": "optional_label"}\n'
+    "21. To adjust system volume or mute:\n"
+    '   {"action": "system_volume", "command": "up"|"down"|"mute"|"set", "level": 50}\n'
+    "22. To run multiple actions in sequence:\n"
     '   {"action": "multi", "commands": [array of action JSON objects]}\n'
+    "23. To terminate or kill Jarvis and close terminal / process to the core:\n"
+    '   {"action": "terminate_jarvis"}\n'
+    "24. To copy active text, specific paragraph, code, or content to clipboard:\n"
+    '   {"action": "smart_copy", "instruction": "instruction like first paragraph or that"}\n'
     "\n"
     "Always reply in English. Keep any conversational 'reply' extremely brief and easy to read aloud by a text-to-speech engine."
 )
@@ -150,6 +167,8 @@ def call_ollama(prompt: str, config: dict) -> str | None:
     """Invoke a local Ollama model API."""
     url = config.get("ollama_url") or "http://localhost:11434"
     model = config.get("ollama_model") or "llama3.2"
+    keep_alive = config.get("ollama_keep_alive", "15m")
+    temperature = float(config.get("ollama_temperature", 0.2))
 
     try:
         import requests
@@ -160,9 +179,11 @@ def call_ollama(prompt: str, config: dict) -> str | None:
                 {"role": "user", "content": prompt}
             ],
             "stream": False,
+            "format": "json",
+            "keep_alive": keep_alive,
             "options": {
-                "temperature": 0.7,
-                "num_predict": 300
+                "temperature": temperature,
+                "num_predict": 180
             }
         }
         response = requests.post(f"{url.rstrip('/')}/api/chat", json=data, timeout=12)

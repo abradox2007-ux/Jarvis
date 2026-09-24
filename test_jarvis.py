@@ -16,6 +16,7 @@ class RouterTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.config = load_config()
+        cls.config["orchestrator_mode"] = False
         cls.router = CommandRouter(cls.config)
 
     def test_delete_rejected(self) -> None:
@@ -188,6 +189,43 @@ class RouterTests(unittest.TestCase):
             mock_ollama.assert_called_once()
             mock_gemini.assert_not_called()
             self.assertIn("Ollama answered", res)
+
+    def test_orchestrator_mode_direct_routing(self) -> None:
+        cfg = dict(self.config)
+        cfg["orchestrator_mode"] = True
+        cfg["use_ollama"] = True
+        router = CommandRouter(cfg)
+
+        with patch("jarvis.router.ai.generate_voice_response", return_value='{"action": "open_app", "name": "notepad"}') as mock_ai, \
+             patch("jarvis.handlers.apps.open_app", return_value="Opening Notepad.") as mock_app:
+            res = router.route("please boot up my text editor")
+            mock_ai.assert_called_once_with("please boot up my text editor", cfg)
+            mock_app.assert_called_once_with("notepad", router._app_aliases)
+            self.assertEqual(res, "Opening Notepad.")
+
+    def test_orchestrator_mode_typo_correction(self) -> None:
+        cfg = dict(self.config)
+        cfg["orchestrator_mode"] = True
+        cfg["use_ollama"] = True
+        router = CommandRouter(cfg)
+
+        # Spoken typo "u tube" corrected by LLM to play_song on youtube
+        with patch("jarvis.router.ai.generate_voice_response", return_value='{"action": "play_song", "name": "interstellar"}') as mock_ai, \
+             patch("webbrowser.open") as mock_browser:
+            res = router.route("play inter stellar on u tube")
+            mock_ai.assert_called_once_with("play inter stellar on u tube", cfg)
+            self.assertIn("Playing 'interstellar' on YouTube", res)
+
+    def test_orchestrator_fast_path_bypass(self) -> None:
+        cfg = dict(self.config)
+        cfg["orchestrator_mode"] = True
+        cfg["use_ollama"] = True
+        router = CommandRouter(cfg)
+
+        with patch("jarvis.router.ai.generate_voice_response") as mock_ai:
+            res = router.route("stop")
+            mock_ai.assert_not_called()
+            self.assertIn("standby", res.lower())
 
     def test_smart_home_routing(self) -> None:
         custom_config = dict(self.config)
@@ -588,6 +626,7 @@ class RouterExtendedTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.config = load_config()
+        cls.config["orchestrator_mode"] = False
         cls.router = CommandRouter(cls.config)
 
     @patch("jarvis.handlers.system._send_virtual_key")
@@ -904,6 +943,223 @@ class RouterExtendedTests(unittest.TestCase):
                 self.assertIn("song1.mp3", content)
                 self.assertIn("song2.wav", content)
                 self.assertIn("song3.flac", content)
+
+    def test_termination_commands(self) -> None:
+        from jarvis.router import is_termination
+        
+        # Test helper function is_termination
+        for phrase in (
+            "kill", "terminate", "kill jarvis", "terminate jarvis",
+            "kill terminal", "terminate terminal", "close terminal",
+            "shutdown jarvis", "shut down jarvis", "kill process",
+            "terminate process", "kill the whole jarvis", "terminate the whole jarvis",
+            "kill to the core", "terminate to the core", "exit jarvis", "quit jarvis",
+            "முழுமையாக நிறுத்து", "முழுசா நிறுத்து", "டெர்மினல் மூடு", "ஜார்விஸை நிறுத்து", "கில் பண்ணு"
+        ):
+            self.assertTrue(is_termination(phrase), f"Expected is_termination('{phrase}') to be True")
+
+class SmartCopyTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.config = load_config()
+        cls.config["orchestrator_mode"] = False
+        cls.router = CommandRouter(cls.config)
+
+    def test_smart_copy_heuristics(self) -> None:
+        from jarvis.handlers.smart_copy import extract_with_heuristics
+
+        sample_text = (
+            "This is the introductory first paragraph.\n\n"
+            "This is the second paragraph with details.\n\n"
+            "Here is the third paragraph with an email test@example.com and url https://google.com.\n\n"
+            "```python\nprint('hello world')\n```"
+        )
+
+        # 1. Full copy
+        text, msg = extract_with_heuristics(sample_text, "copy that")
+        self.assertEqual(text, sample_text)
+        self.assertIn("clipboard", msg.lower())
+
+        # 2. First paragraph
+        text, msg = extract_with_heuristics(sample_text, "copy the first paragraph")
+        self.assertEqual(text, "This is the introductory first paragraph.")
+        self.assertIn("first paragraph", msg.lower())
+
+        # 3. Second paragraph
+        text, msg = extract_with_heuristics(sample_text, "copy the 2nd paragraph")
+        self.assertEqual(text, "This is the second paragraph with details.")
+        self.assertIn("second paragraph", msg.lower())
+
+        # 4. Last paragraph
+        text, msg = extract_with_heuristics(sample_text, "copy the last paragraph")
+        self.assertEqual(text, "```python\nprint('hello world')\n```")
+
+        # 5. Email
+        text, msg = extract_with_heuristics(sample_text, "copy the email")
+        self.assertEqual(text, "test@example.com")
+
+        # 6. URL
+        text, msg = extract_with_heuristics(sample_text, "copy the link")
+        self.assertEqual(text, "https://google.com")
+
+        # 7. Code block
+        text, msg = extract_with_heuristics(sample_text, "copy the code block")
+        self.assertEqual(text, "print('hello world')")
+
+        # 8. Webpage / Google Search raw text with navigation and search metadata
+        google_raw = (
+            "Google\nSearch\nImages\nVideos\nNews\nShopping\nMaps\nBooks\nFlights\nFinance\n"
+            "About 1,230,000,000 results (0.35 seconds)\n"
+            "Search Results\nLarge language model - Wikipedia\nhttps://en.wikipedia.org › wiki › Large_language_model\n"
+            "A large language model is a computational model notable for its ability to achieve general-purpose language generation.\n\n"
+            "People also ask\nWhat is LLM in AI?\n"
+            "Large language models are very large deep learning models that are pre-trained on vast amounts of data."
+        )
+        text1, msg1 = extract_with_heuristics(google_raw, "copy the 1st paragraph")
+        self.assertEqual(text1, "A large language model is a computational model notable for its ability to achieve general-purpose language generation.")
+
+        text2, msg2 = extract_with_heuristics(google_raw, "copy the 2nd paragraph")
+        self.assertEqual(text2, "Large language models are very large deep learning models that are pre-trained on vast amounts of data.")
+
+    def test_router_smart_copy_dispatch(self) -> None:
+        with patch("jarvis.handlers.smart_copy.handle_smart_copy", return_value="Copied to clipboard.") as mock_copy:
+            for phrase in (
+                "copy that",
+                "copy this",
+                "copy to clipboard",
+                "copy the first paragraph",
+                "copy the second paragraph",
+                "copy the last paragraph",
+                "copy the email",
+                "copy the code",
+                "முதல் பத்தியை நகலெடு",
+                "காப்பி செய்"
+            ):
+                mock_copy.reset_mock()
+                res = self.router.route(phrase)
+                mock_copy.assert_called_once()
+                self.assertEqual(res, "Copied to clipboard.")
+
+    def test_copy_file_not_intercepted_by_smart_copy(self) -> None:
+        with patch("jarvis.handlers.files.copy_file", return_value="Copied file test.txt to backup.txt.") as mock_file_copy:
+            res = self.router.route("copy file test.txt to backup.txt")
+            mock_file_copy.assert_called_once()
+            self.assertEqual(res, "Copied file test.txt to backup.txt.")
+
+
+class UIDetectorAndOverlayTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.config = load_config()
+        cls.config["orchestrator_mode"] = False
+        cls.router = CommandRouter(cls.config)
+
+    def setUp(self) -> None:
+        self.router._pending_ui_fields = None
+        self.router._pending_dictation_field = None
+        self.router._pending_search_action = False
+        self.router._pending_whatsapp = None
+        self.router._pending_message_state = None
+
+    def test_parse_choice_number(self) -> None:
+        from jarvis.router import parse_choice_number
+
+        self.assertEqual(parse_choice_number("1"), 1)
+        self.assertEqual(parse_choice_number("one"), 1)
+        self.assertEqual(parse_choice_number("number 2"), 2)
+        self.assertEqual(parse_choice_number("second"), 2)
+        self.assertEqual(parse_choice_number("option 3"), 3)
+        self.assertEqual(parse_choice_number("bar 4"), 4)
+        self.assertEqual(parse_choice_number("5th"), 5)
+        self.assertEqual(parse_choice_number("இரண்டு"), 2)
+        self.assertEqual(parse_choice_number("முதல்"), 1)
+        self.assertIsNone(parse_choice_number("random text"))
+
+    def test_ui_detector_zero_fields(self) -> None:
+        with patch("jarvis.handlers.ui_detector.find_input_fields", return_value=[]):
+            res = self.router.route("select")
+            self.assertIn("No typing or search bar detected", res)
+
+    def test_ui_detector_single_field_direct_focus(self) -> None:
+        dummy_field = {
+            "index": 1,
+            "name": "Search Box",
+            "type": "EditControl",
+            "rect": (100, 100, 300, 140),
+            "center": (200, 120),
+            "control": None
+        }
+        with patch("jarvis.handlers.ui_detector.find_input_fields", return_value=[dummy_field]):
+            with patch("jarvis.handlers.ui_detector.focus_and_click_field") as mock_focus:
+                res = self.router.route("type")
+                mock_focus.assert_called_once_with(dummy_field)
+                self.assertIn("Typing bar selected. What would you like to type?", res)
+                self.assertIsNotNone(self.router._pending_dictation_field)
+
+    def test_ui_detector_multi_fields_selection_and_dictation_flow(self) -> None:
+        dummy_fields = [
+            {"index": 1, "name": "URL Bar", "rect": (10, 50, 400, 80), "center": (200, 65)},
+            {"index": 2, "name": "Google Search", "rect": (100, 200, 500, 240), "center": (300, 220)},
+            {"index": 3, "name": "Chat Input", "rect": (100, 500, 500, 550), "center": (300, 525)},
+        ]
+
+        with patch("jarvis.handlers.ui_detector.find_input_fields", return_value=dummy_fields):
+            with patch("jarvis.ui.overlay.BadgeOverlay.show_badges") as mock_show:
+                # 1. Trigger selection
+                res1 = self.router.route("select typing bar")
+                mock_show.assert_called_once()
+                self.assertIn("Found 3 typing bars. Which number should I choose?", res1)
+                self.assertEqual(len(self.router._pending_ui_fields), 3)
+
+        with patch("jarvis.ui.overlay.BadgeOverlay.hide_badges") as mock_hide:
+            with patch("jarvis.handlers.ui_detector.focus_and_click_field") as mock_focus:
+                # 2. Pick number 2
+                res2 = self.router.route("number 2")
+                mock_hide.assert_called_once()
+                mock_focus.assert_called_once_with(dummy_fields[1])
+                self.assertIn("Selected typing bar 2. What would you like to type?", res2)
+                self.assertIsNone(self.router._pending_ui_fields)
+                self.assertEqual(self.router._pending_dictation_field, dummy_fields[1])
+
+        with patch("jarvis.handlers.ui_detector.type_into_field") as mock_type:
+            # 3. Dictate text to type
+            res3 = self.router.route("Artificial intelligence progress")
+            mock_type.assert_called_once_with(dummy_fields[1], "Artificial intelligence progress", press_enter=False)
+            self.assertEqual(res3, "Typed into field.")
+            self.assertIsNone(self.router._pending_dictation_field)
+
+    def test_ui_detector_search_intent_presses_enter(self) -> None:
+        dummy_field = {"index": 1, "name": "Search", "rect": (10, 50, 400, 80), "center": (200, 65)}
+
+        with patch("jarvis.handlers.ui_detector.find_input_fields", return_value=[dummy_field]):
+            with patch("jarvis.handlers.ui_detector.focus_and_click_field"):
+                res1 = self.router.route("search bar")
+                self.assertIn("What would you like to type?", res1)
+                self.assertTrue(self.router._pending_search_action)
+
+        with patch("jarvis.handlers.ui_detector.type_into_field") as mock_type:
+            res2 = self.router.route("quantum computing breakthroughs")
+            mock_type.assert_called_once_with(dummy_field, "quantum computing breakthroughs", press_enter=True)
+            self.assertIn("Searched for 'quantum computing breakthroughs'.", res2)
+            self.assertIsNone(self.router._pending_dictation_field)
+            self.assertFalse(self.router._pending_search_action)
+
+    def test_ui_detector_cancellation(self) -> None:
+        dummy_fields = [
+            {"index": 1, "name": "URL Bar", "rect": (10, 50, 400, 80), "center": (200, 65)},
+            {"index": 2, "name": "Search Bar", "rect": (100, 200, 500, 240), "center": (300, 220)},
+        ]
+
+        with patch("jarvis.handlers.ui_detector.find_input_fields", return_value=dummy_fields):
+            with patch("jarvis.ui.overlay.BadgeOverlay.show_badges"):
+                self.router.route("type bar")
+                self.assertIsNotNone(self.router._pending_ui_fields)
+
+        with patch("jarvis.ui.overlay.BadgeOverlay.hide_badges") as mock_hide:
+            res_cancel = self.router.route("cancel")
+            mock_hide.assert_called_once()
+            self.assertEqual(res_cancel, "Cancelled selection.")
+            self.assertIsNone(self.router._pending_ui_fields)
 
 
 if __name__ == "__main__":

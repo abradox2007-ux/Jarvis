@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import collections
 import logging
-import re
+import os
 import queue
+import re
 import threading
 import time
-import collections
 from typing import Callable, Optional
 import numpy as np
 import speech_recognition as sr
@@ -81,7 +82,7 @@ class Listener:
         on_mic_error: Callable[[], None] | None = None,
     ) -> None:
         self._recognizer = sr.Recognizer()
-        self._recognizer.pause_threshold = 0.7
+        self._recognizer.pause_threshold = 0.4
         self._recognizer.dynamic_energy_threshold = True
         self._ambient_adjusted = False
         self._device_index = device_index
@@ -104,7 +105,7 @@ class Listener:
         self._wake_word_model_name = config.get("wake_word_model", "hey_jarvis")
         self._wake_word_threshold = config.get("wake_word_threshold", 0.38)
         self._vad_threshold = config.get("vad_threshold", 0.15)
-        self._vad_silence_duration = float(config.get("vad_silence_duration", 0.45))
+        self._vad_silence_duration = float(config.get("vad_silence_duration", 0.35))
         self._vad_initial_timeout = config.get("vad_initial_timeout", 7.0)
         self._vad_model_path = config.get("vad_model_path", "bin/vad/silero_vad.onnx")
 
@@ -386,6 +387,9 @@ class Listener:
                     wav_data,
                     language="en",
                     beam_size=1,
+                    best_of=1,
+                    temperature=0.0,
+                    vad_filter=False,
                     without_timestamps=True,
                     condition_on_previous_text=False
                 )

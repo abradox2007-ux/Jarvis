@@ -196,3 +196,36 @@ def get_battery_status() -> str:
             logger.debug("PowerShell battery query failed: %s", e)
 
     return "Battery information is not available."
+
+
+def terminate_jarvis(delay_seconds: float = 1.2) -> str:
+    """
+    Completely terminate Jarvis and kill the terminal / process tree to the core.
+    Schedules execution after a brief delay so spoken farewell and status updates complete cleanly.
+    """
+    import threading
+    import time
+
+    def _shutdown_worker() -> None:
+        time.sleep(delay_seconds)
+        try:
+            from server import set_status
+            set_status("idle", "Jarvis is offline.")
+        except Exception:
+            pass
+        try:
+            from jarvis.speech import shutdown as shutdown_speech
+            shutdown_speech()
+        except Exception:
+            pass
+
+        if sys.platform == "win32":
+            try:
+                pid = os.getpid()
+                subprocess.Popen(f"taskkill /F /T /PID {pid}", shell=True)
+            except Exception:
+                pass
+        os._exit(0)
+
+    threading.Thread(target=_shutdown_worker, daemon=False).start()
+    return "Terminating Jarvis and closing terminal. Goodbye."

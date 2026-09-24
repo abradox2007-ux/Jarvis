@@ -1,10 +1,16 @@
-# Python
+# Python & Tests
 venv/
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+.pytest_cache/
 .env
+
+# Build & Packaging
+build/
+dist/
+*.spec
 
 # Logs & runtime data
 logs/

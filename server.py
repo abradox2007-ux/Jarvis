@@ -8,14 +8,14 @@ import queue
 import time
 from collections import deque
 from pathlib import Path
-from threading import Lock
+from threading import RLock
 from flask import Flask, jsonify, request, send_from_directory, Response
 
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__, static_folder="frontend")
 
-_lock = Lock()
+_lock = RLock()
 _state: dict = {
     "phase": "idle",          # idle | waiting | listening | processing | error
     "message": "Jarvis is offline.",
@@ -105,9 +105,10 @@ def update_device(device_id: str, updates: dict) -> bool:
                     else:
                         _devices[device_id][k] = str(v)
             devices_copy = {k: dict(v) for k, v in _devices.items()}
-            broadcast_event("devices", devices_copy)
-            return True
-        return False
+        else:
+            return False
+    broadcast_event("devices", devices_copy)
+    return True
 
 
 def set_status(phase: str, message: str) -> None:

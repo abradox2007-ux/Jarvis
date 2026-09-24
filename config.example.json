@@ -22,9 +22,12 @@
   "continuous_conversation": true,
   "follow_up_timeout": 8.0,
   "conversation_memory_turns": 10,
+  "orchestrator_mode": true,
   "use_ollama": true,
   "ollama_url": "http://localhost:11434",
   "ollama_model": "llama3.2",
+  "ollama_keep_alive": "15m",
+  "ollama_temperature": 0.2,
   "plugins_dir": "./plugins",
   "search_paths": [
     "~/Desktop",

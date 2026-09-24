@@ -125,12 +125,18 @@ def main() -> None:
                     if response != "Opening manual diary panel.":
                         set_status("idle", f'Done: {response[:60]}{"…" if len(response) > 60 else ""}')
 
-                    from jarvis.router import is_dismissal
+                    from jarvis.router import is_dismissal, is_termination
+                    if is_termination(command):
+                        logger.info("Termination command received: '%s'", command)
+                        set_status("idle", "Jarvis is offline.")
+                        break
+
                     if is_dismissal(command):
                         set_status("idle", 'Standing by. Say "Hey Jarvis" when ready.')
                         continue
 
                 # ── Phase 4: Continuous Active Listening Loop ────────────
+                should_terminate = False
                 if continuous_conversation:
                     logger.info("Entering continuous conversation mode (active until 'stop')...")
                     while True:
@@ -152,7 +158,17 @@ def main() -> None:
                             # Silence timeout on this chunk: remain active and keep listening
                             continue
 
-                        from jarvis.router import is_dismissal
+                        from jarvis.router import is_dismissal, is_termination
+                        if is_termination(follow_up):
+                            logger.info("Termination command received in follow-up: '%s'", follow_up)
+                            set_status("processing", f'Processing: "{follow_up}"')
+                            follow_up_res = router.route(follow_up)
+                            speak(follow_up_res)
+                            add_history(follow_up, follow_up_res, ok=True)
+                            set_status("idle", "Jarvis is offline.")
+                            should_terminate = True
+                            break
+
                         if is_dismissal(follow_up):
                             logger.info("Dismissal command received: '%s'", follow_up)
                             set_status("processing", f'Processing: "{follow_up}"')
@@ -170,6 +186,9 @@ def main() -> None:
 
                         if follow_up_res != "Opening manual diary panel.":
                             set_status("idle", f'Done: {follow_up_res[:60]}{"…" if len(follow_up_res) > 60 else ""}')
+
+                if should_terminate:
+                    break
 
                 network_error_spoken = False
                 mic_error_spoken = False
