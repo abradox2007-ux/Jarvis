@@ -1196,6 +1196,86 @@ class UIDetectorAndOverlayTests(unittest.TestCase):
             self.assertEqual(res_cancel, "Cancelled selection.")
             self.assertIsNone(self.router._pending_ui_fields)
 
+    def test_morning_routine(self) -> None:
+        with patch("jarvis.handlers.info.tell_weather", return_value="The weather in Chennai: Clear, 28 degrees Celsius."):
+            res = self.router.route("good morning")
+            self.assertIn("Good morning", res)
+            self.assertIn("All systems operational", res)
+
+            res_tam = self.router.route("காலை வணக்கம்")
+            self.assertIn("Good morning", res_tam)
+
+    def test_night_routine(self) -> None:
+        with patch("jarvis.handlers.system.set_volume_percent") as mock_vol, \
+             patch("jarvis.handlers.system.set_brightness") as mock_bright:
+            res = self.router.route("good night")
+            self.assertIn("Good night", res)
+            mock_vol.assert_called_once_with(15)
+
+            mock_vol.reset_mock()
+            res_tam = self.router.route("இரவு வணக்கம்")
+            self.assertIn("Good night", res_tam)
+            mock_vol.assert_called_once_with(15)
+
+    def test_play_playlist(self) -> None:
+        with patch("jarvis.handlers.media.play_local_playlist", return_value="Playing 10 songs from your playlist.") as mock_media:
+            res = self.router.route("play my playlist")
+            mock_media.assert_called_once_with(self.router._local_playlist_dir, shuffle=True)
+            self.assertEqual(res, "Playing 10 songs from your playlist.")
+
+            mock_media.reset_mock()
+            res_tam = self.router.route("பாடல்களை ப்ளே பண்ணு")
+            mock_media.assert_called_once_with(self.router._local_playlist_dir, shuffle=True)
+            self.assertEqual(res_tam, "Playing 10 songs from your playlist.")
+
+    def test_workspace_presets(self) -> None:
+        with patch("jarvis.handlers.apps.open_app") as mock_app, \
+             patch("jarvis.handlers.urls.open_url") as mock_url:
+            res = self.router.route("open coding workspace")
+            self.assertIn("Coding workspace", res)
+            mock_app.assert_called()
+            mock_url.assert_called()
+
+            res_tam = self.router.route("கோடிங் மோடு")
+            self.assertIn("Coding workspace", res_tam)
+
+    def test_focus_session(self) -> None:
+        with patch("jarvis.handlers.timer.create_timer", return_value="Timer set for 25 minutes.") as mock_timer, \
+             patch("jarvis.handlers.system.set_volume_percent"):
+            res = self.router.route("start 25 minute focus session")
+            mock_timer.assert_called_once_with(1500, "Focus session")
+            self.assertIn("Focus mode initiated for 25 minutes", res)
+
+            mock_timer.reset_mock()
+            res_tam = self.router.route("ஃபோகஸ் மோடு")
+            mock_timer.assert_called_once_with(1500, "Focus session")
+            self.assertIn("Focus mode initiated for 25 minutes", res_tam)
+
+    def test_quick_notes(self) -> None:
+        with patch("jarvis.handlers.notes.add_note", return_value="Noted down: buy groceries.") as mock_add:
+            res = self.router.route("note down buy groceries")
+            mock_add.assert_called_once_with("buy groceries")
+            self.assertEqual(res, "Noted down: buy groceries.")
+
+            mock_add.reset_mock()
+            res_thought = self.router.route("save thought finish project tomorrow")
+            mock_add.assert_called_once_with("finish project tomorrow")
+            self.assertEqual(res_thought, "Noted down: buy groceries.")
+
+            mock_add.reset_mock()
+            res_tam = self.router.route("குறிப்பு எடு வாங்க பால்")
+            mock_add.assert_called_once_with("வாங்க பால்")
+
+        with patch("jarvis.handlers.notes.read_notes", return_value="Here are your latest notes: buy groceries.") as mock_read:
+            res_read = self.router.route("read my notes")
+            mock_read.assert_called_once()
+            self.assertIn("buy groceries", res_read)
+
+        with patch("jarvis.handlers.notes.open_notes", return_value="Opening your quick notes.") as mock_open:
+            res_open = self.router.route("open quick notes")
+            mock_open.assert_called_once()
+            self.assertEqual(res_open, "Opening your quick notes.")
+
 
 if __name__ == "__main__":
     unittest.main()

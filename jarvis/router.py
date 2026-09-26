@@ -6,7 +6,7 @@ import logging
 import os
 import re
 
-from jarvis.handlers import apps, diary, files, info, urls, ai, system, timer, whatsapp, media, smart_copy, ui_detector
+from jarvis.handlers import apps, diary, files, info, urls, ai, system, timer, whatsapp, media, smart_copy, ui_detector, routines, workspace, notes
 from jarvis.handlers.custom_commands import CustomCommandManager
 from jarvis.plugin_manager import PluginManager
 from jarvis.ui.overlay import get_badge_overlay
@@ -77,7 +77,11 @@ def is_dismissal(command: str) -> bool:
     cmd = command.strip().lower().rstrip(".!?,")
 
     # Exclude specific targeted controls from accidental dismissal
-    if cmd in ("stop music", "stop media", "stop song", "stop playback", "stop timer", "stop timers", "cancel timer", "cancel timers"):
+    if cmd in (
+        "stop music", "stop media", "stop song", "stop playback",
+        "stop timer", "stop timers", "cancel timer", "cancel timers",
+        "good night", "night routine", "goodnight", "good morning", "morning briefing", "morning routine"
+    ):
         return False
 
     if is_termination(cmd):
@@ -166,6 +170,32 @@ def translate_tamil_to_english(cmd: str) -> str:
     # 1. Help / Info commands
     if any(w in t for w in ("உதவி", "வழிகாட்டி", "கட்டளைகள்", "வழிமுறை")):
         return "help"
+
+    # 1.5 Routines & Media (Tamil)
+    if any(w in t for w in ("காலை வணக்கம்", "காலை வணக்கம் ஜார்விஸ்")):
+        return "good morning"
+    if any(w in t for w in ("இரவு வணக்கம்", "இரவு வணக்கம் ஜார்விஸ்")):
+        return "good night"
+    if any(w in t for w in ("பாடல்களை ப்ளே பண்ணு", "பாட்டு போடு", "பிளேலிஸ்ட் போடு", "பிளேலிஸ்ட் ப்ளே பண்ணு", "மியூசிக் போடு")):
+        return "play my playlist"
+
+    # 1.6 Workspaces & Focus (Tamil)
+    if any(w in t for w in ("கோடிங் மோடு", "கோடிங் ஒர்க்ஸ்பேஸ்")):
+        return "coding workspace"
+    if any(w in t for w in ("படிப்பு மோடு", "ஸ்டடி மோடு", "படிப்பு ஒர்க்ஸ்பேஸ்")):
+        return "study workspace"
+    if any(w in t for w in ("ஃபோகஸ் மோடு", "ஃபோகஸ் செஷன்", "போகஸ் மோடு")):
+        return "focus mode"
+
+    # 1.7 Quick Notes (Tamil)
+    note_tam_match = re.match(r"^(?:குறிப்பு\s+எடு|நோட்\s+பண்ணு)\s*(.*)$", t)
+    if note_tam_match:
+        content = note_tam_match.group(1).strip()
+        return f"note down {content}"
+    if any(w in t for w in ("நோட்ஸ் படி", "குறிப்புகளை படி", "நோட்ஸ் காட்டு", "குறிப்புகளை காட்டு")):
+        return "read notes"
+    if any(w in t for w in ("நோட்ஸ் திற", "நோட்ஸ் ஓபன் பண்ணு")):
+        return "open notes"
 
     # 2. Time / Date / Weather
     if any(w in t for w in ("நேரம்", "மணி என்ன", "மணி என்னா", "நேரம் என்ன")):
@@ -600,6 +630,56 @@ class CommandRouter:
             items = [m["content"] for m in mems[:5]]
             return f"Here is what I remember: {'; '.join(items)}."
 
+        # ── Daily Routines (Good Morning / Good Night / Briefing) ─────────────
+        if any(cmd == p or cmd.startswith(p + " ") for p in (
+            "good morning", "morning briefing", "morning routine", "daily briefing", "system briefing", "briefing"
+        )):
+            play_music_requested = "music" in cmd or "song" in cmd or "playlist" in cmd
+            return routines.run_morning_routine(self._config, play_music=play_music_requested)
+
+        if any(cmd == p or cmd.startswith(p + " ") for p in (
+            "good night", "night routine", "goodnight", "sleep mode", "bedtime", "bed time"
+        )):
+            return routines.run_night_routine(self._config)
+
+        # ── Local Music Playlist ─────────────────────────────────────────────
+        if any(cmd == p or cmd.startswith(p + " ") for p in (
+            "play my playlist", "play playlist", "start my playlist", "start playlist",
+            "play local playlist", "shuffle my playlist", "shuffle playlist",
+            "play songs", "play my songs", "play music playlist", "play music", "play my music",
+            "play some music", "play some songs"
+        )):
+            return media.play_local_playlist(self._local_playlist_dir, shuffle=True)
+
+        # ── Workspace Presets & Focus Sessions ───────────────────────────────
+        if cmd in ("list workspaces", "show workspaces", "workspaces", "show workspace profiles", "list workspace profiles"):
+            return workspace.list_workspaces(self._config)
+
+        # Focus / Pomodoro Mode
+        focus_match = re.match(
+            r"^(?:start\s+)?(?:a\s+)?(?:(\d+)\s*(?:minute|minutes|min|mins)\s+)?(?:focus|pomodoro|deep\s*work)\s*(?:session|mode)?$",
+            cmd
+        )
+        if focus_match:
+            dur = int(focus_match.group(1)) if focus_match.group(1) else 25
+            return workspace.start_focus_session(dur, self._config)
+
+        # Explicit named workspace commands
+        ws_match = re.match(
+            r"^(?:open|start|launch|activate|switch\s+to|enter)\s+(?:the\s+)?([a-zA-Z0-9_\-]+)\s+(?:workspace|mode|environment|preset)$",
+            cmd
+        )
+        if ws_match:
+            profile = ws_match.group(1).strip()
+            return workspace.launch_workspace(profile, self._config)
+
+        if cmd in ("coding workspace", "coding mode", "developer mode", "dev mode"):
+            return workspace.launch_workspace("coding", self._config)
+        if cmd in ("study workspace", "study mode", "reading mode"):
+            return workspace.launch_workspace("study", self._config)
+        if cmd in ("research workspace", "research mode"):
+            return workspace.launch_workspace("research", self._config)
+
         # ── System Controls (Volume, Media, Workstation, Screen) ─────────────
         if cmd in ("mute volume", "unmute volume", "toggle mute", "mute audio", "unmute audio", "mute system", "unmute system"):
             return system.mute_volume()
@@ -719,6 +799,32 @@ class CommandRouter:
         if diary_match:
             entry_text = re.sub(r"^diary\b\s*[,.:|-]?\s*", "", translated_command, flags=re.IGNORECASE).strip()
             return diary.append_diary_entry(entry_text)
+
+        # ── Quick Voice Notes & Thoughts ─────────────────────────────────────
+        if any(cmd == p for p in (
+            "read my notes", "read notes", "show my notes", "show notes",
+            "what are my notes", "read quick notes", "show quick notes", "list notes"
+        )):
+            return notes.read_notes()
+
+        if any(cmd == p for p in ("open quick notes", "view quick notes", "show quick notes", "show quick notes file", "open my quick notes")):
+            return notes.open_notes()
+
+        if not re.match(r"^(?:note\s+down|note|add\s+note|record)\s+(?:in|to|for|into)\s+", cmd, re.IGNORECASE):
+            note_match = re.match(
+                r"^(?:note\s+down|take\s+a\s+note|quick\s+note|save\s+thought|save\s+a\s+thought|make\s+a\s+note|write\s+a\s+note|add\s+note|note\s+that|note\s+this\s+down|note\s+this|note)\b\s*[,.:|-]?\s*(.*)$",
+                cmd,
+                re.IGNORECASE
+            )
+            if note_match:
+                note_body = re.sub(
+                    r"^(?:note\s+down|take\s+a\s+note|quick\s+note|save\s+thought|save\s+a\s+thought|make\s+a\s+note|write\s+a\s+note|add\s+note|note\s+that|note\s+this\s+down|note\s+this|note)\b\s*[,.:|-]?\s*",
+                    "",
+                    translated_command,
+                    flags=re.IGNORECASE
+                ).strip()
+                if note_body:
+                    return notes.add_note(note_body)
 
         # ── Ollama / Local AI Status ──────────────────────────────────────────
         if any(p in cmd for p in (

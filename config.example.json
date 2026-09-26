@@ -77,5 +77,23 @@
   "allow_custom_shell_commands": true,
   "custom_command_passkey": "1312",
   "require_passkey_for_all_shell_cmds": true,
-  "shell_command_timeout_seconds": 8
+  "shell_command_timeout_seconds": 8,
+  "local_playlist_dir": "C:\\Users\\<Username>\\Music\\My_playlist",
+  "morning_routine_play_music": false,
+  "morning_routine_include_weather": true,
+  "morning_routine_include_battery": true,
+  "night_routine_set_volume": 15,
+  "night_routine_set_brightness": 20,
+  "workspaces": {
+    "coding": {
+      "apps": ["notepad"],
+      "urls": ["github"],
+      "message": "Coding workspace initialized."
+    },
+    "study": {
+      "apps": ["notepad"],
+      "urls": ["google", "chatgpt"],
+      "message": "Study mode activated."
+    }
+  }
 }
