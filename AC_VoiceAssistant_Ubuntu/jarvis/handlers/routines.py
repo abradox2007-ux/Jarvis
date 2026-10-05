@@ -47,7 +47,6 @@ def find_best_project_directory(
     if not candidate_folders:
         return None, None
 
-    # If no specific query given, pick the most recently modified directory
     if not project_query or not project_query.strip():
         try:
             candidate_folders.sort(key=lambda p: p.stat().st_mtime, reverse=True)
@@ -58,12 +57,10 @@ def find_best_project_directory(
 
     query = project_query.strip().lower()
 
-    # 1. Exact match (case-insensitive)
     for folder in candidate_folders:
         if folder.name.lower() == query:
             return folder, folder.name
 
-    # 2. Substring match
     sub_matches = [
         f for f in candidate_folders if query in f.name.lower() or f.name.lower() in query
     ]
@@ -71,7 +68,6 @@ def find_best_project_directory(
         sub_matches.sort(key=lambda p: p.stat().st_mtime, reverse=True)
         return sub_matches[0], sub_matches[0].name
 
-    # 3. Fuzzy similarity match
     folder_names = [f.name for f in candidate_folders]
     matches = difflib.get_close_matches(project_query, folder_names, n=3, cutoff=0.35)
     if matches:
@@ -79,7 +75,6 @@ def find_best_project_directory(
         matched_folders.sort(key=lambda p: p.stat().st_mtime, reverse=True)
         return matched_folders[0], matched_folders[0].name
 
-    # Fallback to most recent
     candidate_folders.sort(key=lambda p: p.stat().st_mtime, reverse=True)
     return candidate_folders[0], candidate_folders[0].name
 
@@ -191,8 +186,8 @@ def run_morning_routine(
     search_dirs = config.get(
         "project_search_dirs",
         [
-            r"C:\Users\Abinesh\OneDrive\Desktop",
-            r"C:\Users\Abinesh\OneDrive\Documents\VS_code_1",
+            r"~/Desktop",
+            r"~/Documents",
         ],
     )
     should_open_ide = config.get("morning_routine_open_antigravity", True)
@@ -200,7 +195,7 @@ def run_morning_routine(
     app_aliases = config.get("app_aliases", {})
     antigravity_cmd = app_aliases.get(
         "antigravity",
-        r"C:\Users\Abinesh\AppData\Local\Programs\Antigravity IDE\Antigravity IDE.exe",
+        "antigravity",
     )
     clean_antigravity_exe = antigravity_cmd.strip('"')
 
@@ -209,14 +204,8 @@ def run_morning_routine(
     if should_open_ide:
         try:
             if proj_path and proj_path.exists():
-                # Launch Antigravity IDE with the project folder
                 cmd = f'"{clean_antigravity_exe}" "{str(proj_path)}"'
                 subprocess.Popen(cmd, shell=True)
-                # Also open the folder
-                try:
-                    os.startfile(str(proj_path))
-                except Exception:
-                    pass
                 parts.append(
                     f"Setting brightness to {brightness_level} percent, opening Antigravity IDE with project {proj_name},"
                 )
@@ -235,7 +224,7 @@ def run_morning_routine(
     # 7. Play Playlist / Song (After Antigravity launch)
     should_play_music = play_music or config.get("morning_routine_play_music", True)
     if should_play_music:
-        playlist_dir = config.get("local_playlist_dir", r"C:\Users\Abinesh\Music\My_playlist")
+        playlist_dir = config.get("local_playlist_dir", r"~/Music/My_playlist")
         try:
             threading.Thread(
                 target=media.play_local_playlist,

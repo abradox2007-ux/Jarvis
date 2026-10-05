@@ -1276,6 +1276,66 @@ class UIDetectorAndOverlayTests(unittest.TestCase):
             mock_open.assert_called_once()
             self.assertEqual(res_open, "Opening your quick notes.")
 
+    def test_routines_execution(self) -> None:
+        from jarvis.handlers import routines
+        with patch("jarvis.handlers.system.set_volume_percent"), \
+             patch("jarvis.handlers.system.set_brightness"), \
+             patch("jarvis.handlers.system.lock_workstation"), \
+             patch("jarvis.handlers.media.play_local_playlist", return_value="Playlist started"), \
+             patch("jarvis.handlers.diary.append_diary_entry", return_value="Added to your diary.") as mock_diary, \
+             patch("server.set_device_state") as mock_dev:
+
+            care_res = routines.run_care_mode(self.config, reason="headache")
+            self.assertIn("feeling unwell", care_res.lower())
+            mock_dev.assert_any_call("light", "off")
+            mock_diary.assert_called_once()
+
+            gym_res = routines.run_gym_routine(self.config)
+            self.assertIn("gym", gym_res.lower())
+            mock_dev.assert_any_call("light", "off")
+            mock_dev.assert_any_call("ac", "off")
+
+            relax_res = routines.run_relax_routine(self.config)
+            self.assertIn("relaxation", relax_res.lower())
+
+            night_res = routines.run_night_routine(self.config)
+            self.assertIn("good night", night_res.lower())
+
+    def test_server_device_state(self) -> None:
+        from server import set_device_state, get_devices
+        self.assertTrue(set_device_state("light", "on"))
+        devices = get_devices()
+        self.assertEqual(devices["light"]["state"], "on")
+        self.assertTrue(set_device_state("light", "off"))
+        devices = get_devices()
+        self.assertEqual(devices["light"]["state"], "off")
+
+    def test_workspace_helpers(self) -> None:
+        from jarvis.handlers import workspace
+        with patch("jarvis.handlers.apps.open_app"), \
+             patch("jarvis.handlers.urls.open_url"):
+            coding_res = workspace.launch_coding_workspace(self.config)
+            self.assertTrue("workspace" in coding_res.lower() or "coding" in coding_res.lower())
+            study_res = workspace.launch_study_workspace(self.config)
+            self.assertTrue("workspace" in study_res.lower() or "study" in study_res.lower())
+
+    def test_router_ai_action_dispatch(self) -> None:
+        with patch("jarvis.handlers.routines.run_care_mode", return_value="Care mode active.") as mock_care, \
+             patch("jarvis.handlers.routines.run_gym_routine", return_value="Gym mode active.") as mock_gym, \
+             patch("jarvis.handlers.workspace.launch_workspace", return_value="Workspace active.") as mock_ws:
+            
+            res_care = self.router.execute_single_action({"action": "care_mode", "reason": "cold"})
+            self.assertEqual(res_care, "Care mode active.")
+            mock_care.assert_called_once()
+
+            res_gym = self.router.execute_single_action({"action": "gym_routine"})
+            self.assertEqual(res_gym, "Gym mode active.")
+            mock_gym.assert_called_once()
+
+            res_code = self.router.execute_single_action({"action": "coding_workspace"})
+            self.assertEqual(res_code, "Workspace active.")
+            mock_ws.assert_called_with("coding", self.config)
+
 
 if __name__ == "__main__":
     unittest.main()

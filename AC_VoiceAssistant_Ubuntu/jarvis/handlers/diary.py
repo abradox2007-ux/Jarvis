@@ -33,11 +33,10 @@ def open_diary() -> str:
         DIARY_PATH.parent.mkdir(exist_ok=True)
         with open(DIARY_PATH, "w", encoding="utf-8") as f:
             f.write("=== My Voice Assistant Diary ===\n")
-    try:
-        os.startfile(str(DIARY_PATH))
+    from jarvis.utils import open_file_crossplatform
+    if open_file_crossplatform(DIARY_PATH):
         return "Opening your diary."
-    except Exception as exc:
-        return f"Couldn't open the diary file: {exc}"
+    return "Couldn't open the diary file."
 
 
 def get_diary_entries() -> list[dict[str, str | int]]:

@@ -1,0 +1,385 @@
+================================================================================
+                    JARVIS AI VOICE ASSISTANT — MASTER COMMANDS REFERENCE
+================================================================================
+
+TABLE OF CONTENTS:
+ 1. WAKE WORD, PHONETIC VARIATIONS & ACTIVATION
+ 2. DISMISSAL, STANDBY & PROCESS TERMINATION
+ 3. PROACTIVE CARE, SICKNESS & WELLNESS MODES (NEW)
+ 4. DAILY ROUTINES & WORKSPACE PRESETS
+ 5. SMART COPY & AI CLIPBOARD TOOLS
+ 6. WHATSAPP AUTOMATION & MESSAGING
+ 7. QUICK NOTES, VOICE DIARY & LONG-TERM MEMORY (RAG)
+ 8. FILE & DOCUMENT OPERATIONS (WRITE / RENAME / COPY / MOVE)
+ 9. SYSTEM VOLUME, SCREEN BRIGHTNESS & MEDIA CONTROLS
+10. HARDWARE, BATTERY, SCREENSHOT & WORKSTATION SECURITY
+11. APPLICATION LAUNCHER & PHONETIC MISPRONUNCIATIONS
+12. WEB BROWSING, SEARCH & YOUTUBE PLAYBACK
+13. TIMERS, COUNTDOWNS & ALARMS
+14. SMART HOME & DEVICE CONTROL HUB
+15. GENERAL KNOWLEDGE & LLM REASONING (GEMINI / OLLAMA)
+16. TAMIL VOICE COMMANDS (தமிழ் குரல் கட்டளைகள்)
+17. DYNAMIC CUSTOM COMMANDS & PASSKEY SECURITY
+18. EXTERNAL PYTHON PLUGINS
+
+================================================================================
+1. WAKE WORD, PHONETIC VARIATIONS & ACTIVATION
+================================================================================
+Primary Wake Words:
+  - "Hey Jarvis"
+  - "Hello Jarvis"
+  - "Hi Jarvis"
+  - "Ok Jarvis" / "Okay Jarvis"
+  - "Jarvis"
+  - "Hey AC" / "Hello AC"
+  - "Alexa"
+  - "ஹே ஜார்விஸ்" / "ஜார்விஸ்"
+
+Recognized Phonetic Variations & Mispronunciations:
+  Jarvis is engineered with phonetic acoustic matching to catch variations:
+  - "Hey Jervis" / "Jarvus" / "Javis" / "Jarves" / "Charvis"
+  - "Travis" / "Service" / "Harvest" / "Starfish" / "Artist" / "Jar"
+
+Interaction Tips:
+  * INLINE COMMANDS: Speak wake word + command in one breath:
+    e.g. "Hey Jarvis open notepad" or "Hey Jarvis what is the weather?"
+  * CONTINUOUS CONVERSATION: After completing an action, Jarvis remains actively
+    listening for 7.5 seconds for follow-up commands without repeating the wake word.
+  * DOT (.) INSTANT EXECUTION: Say "dot" at the end of an utterance to trigger
+    immediate execution (e.g. "open notepad dot open calculator dot").
+
+
+================================================================================
+2. DISMISSAL, STANDBY & PROCESS TERMINATION
+================================================================================
+Standby / Sleep (Temporary Idle):
+  - "Stop" / "Jarvis stop" / "Please stop" / "Stop listening"
+  - "Go to sleep" / "Sleep" / "Sleep now" / "Jarvis go to sleep"
+  - "Standby" / "Stand by" / "Jarvis standby"
+  - "Bye" / "Goodbye" / "Good bye"
+  - "That's all" / "That is all"
+  - "Thank you" / "Thanks" / "Thank you Jarvis"
+  - "Nevermind" / "Cancel" / "Mute"
+  - "போதும்" / "முடிந்தது" / "நன்றி" / "நிறுத்து"
+
+Complete Termination (Shuts Down Jarvis Process & Terminal):
+  - "Terminate Jarvis" / "Kill Jarvis" / "Shutdown Jarvis"
+  - "Kill terminal" / "Close terminal" / "Exit terminal" / "Quit terminal"
+  - "Kill assistant" / "Terminate assistant" / "Exit assistant"
+  - "Kill the whole Jarvis" / "Terminate Jarvis to the core"
+  - "Shutdown system" / "Exit program" / "Quit Jarvis"
+  - "முழுமையாக நிறுத்து" / "டெர்மினல் மூடு" / "ஜார்விஸை நிறுத்து" / "கில் பண்ணு"
+
+
+================================================================================
+3. PROACTIVE CARE, SICKNESS & WELLNESS MODES (NEW)
+================================================================================
+Autonomous Care Mode activates when you express fatigue, illness, or distress:
+  - "Jarvis turn down the volume, I'm feeling sick"
+  - "I'm not feeling well, quiet everything"
+  - "I have a bad headache, dim the lights"
+  - "I have a fever and feel exhausted"
+  - "Activate care mode" / "Wellness mode" / "Sick mode"
+
+Autonomous Actions Taken:
+  1. Reduces system volume to soothing level (15%).
+  2. Dims screen brightness to 20-25% to minimize eye strain.
+  3. Turns off simulated overhead room lighting.
+  4. Automatically logs a wellness timestamp note into data/diary.json.
+  5. Empathetically asks if you want to notify your emergency contact,
+     reschedule upcoming tasks, or set a rest timer.
+
+
+================================================================================
+4. DAILY ROUTINES & WORKSPACE PRESETS
+================================================================================
+Daily Routines:
+  - "Good morning" / "Good morning Jarvis" / "காலை வணக்கம்"
+    (Greets with title, time, date, live weather, battery %, diary check & optional playlist)
+  - "Morning briefing" / "Daily briefing" / "System briefing"
+  - "Good night" / "Good night Jarvis" / "இரவு வணக்கம்" / "Sleep mode"
+    (Sets volume to 15%, dims display, enters quiet standby mode)
+  - "Gym routine" / "Gym mode" / "Heading to the gym" / "Workout mode"
+    (Powers down appliances, secures workstation/locks screen)
+  - "Relax mode" / "Relax routine" / "Chill mode"
+    (Dims display, sets volume to 40%, starts local relaxing music playlist)
+
+Workspace Presets:
+  - "Open coding workspace" / "Coding mode" / "Developer mode" / "கோடிங் மோடு"
+    (Launches IDE, GitHub, and dev environment)
+  - "Study mode" / "Study workspace" / "படிப்பு மோடு"
+    (Launches Notepad, Google, ChatGPT, study portals)
+  - "Research mode" / "Research workspace"
+  - "List workspaces" / "Show workspaces"
+  - "Start 25 minute focus session" / "Focus mode" / "Pomodoro mode" / "ஃபோகஸ் மோடு"
+
+
+================================================================================
+5. SMART COPY & AI CLIPBOARD TOOLS
+================================================================================
+Semantic Text Extraction (Extracts from current window / active search):
+  - "Copy first paragraph" / "Copy 1st paragraph" / "முதல் பத்தியை காப்பி செய்"
+  - "Copy second paragraph" / "Copy 2nd paragraph"
+  - "Copy last paragraph" / "Copy third paragraph"
+  - "Copy first line" / "Copy second line" / "Copy last line"
+  - "Copy heading" / "Copy title" / "Copy code snippet"
+
+AI Clipboard Utilities (Processes whatever text is currently in clipboard):
+  - "Summarize clipboard" / "Summarize this text"
+  - "Fix grammar" / "Correct grammar in clipboard"
+  - "Explain this code" / "Explain clipboard code"
+  - "Translate clipboard to Tamil" / "கிளிப்போர்டை தமிழில் மொழிபெயர்"
+  - "Translate clipboard to English"
+
+
+================================================================================
+6. WHATSAPP AUTOMATION & MESSAGING
+================================================================================
+Single-Sentence Direct Staging:
+  - "Send WhatsApp message to Mom saying I will be home by 7 PM"
+  - "Send message to John saying let's meet tomorrow"
+  - "WhatsApp Rahul stating project is completed"
+
+Multi-Turn Interactive Staging:
+  - You: "Send a WhatsApp message"
+  - Jarvis: "Who would you like to message?"
+  - You: "Alex"
+  - Jarvis: "What message would you like to send to Alex?"
+  - You: "Are you coming to college today?"
+  - Jarvis: "I have staged your message to Alex: 'Are you coming to college today?'. Shall I send it?"
+  - You: "Yes" / "Send it" / "Confirm" (or "No" / "Cancel")
+
+
+================================================================================
+7. QUICK NOTES, VOICE DIARY & LONG-TERM MEMORY (RAG)
+================================================================================
+Quick Scratch Notes:
+  - "Note down: buy groceries and milk" / "குறிப்பு எடு: ..."
+    (Instantly appends timestamped text to data/quick_notes.txt)
+  - "Save thought: submit assignment before Friday"
+  - "Take a note: meeting at 4 PM"
+  - "Read my notes" / "What are my notes" / "நோட்ஸ் படி"
+  - "Open notes" / "View notes" / "நோட்ஸ் திற" (Opens file in Notepad)
+
+Voice Diary & Journaling:
+  - "Diary <content>" (e.g. "Diary finished testing phase 2 successfully today")
+  - "Read diary" / "Show diary" / "View diary" / "டைரி படி"
+  - "Read my last diary entry" / "Read today's diary"
+  - "Manual diary" / "Diary manual" (Opens manual entry panel in Web UI)
+
+Long-Term AI Memory Store (SQLite RAG):
+  - "Remember that my favorite programming language is Python"
+  - "Remember that my car registration number is TN01AB1234"
+  - "Remember that my family doctor is Dr. Sharma"
+  - "What do you remember?" / "List memories" / "Show memories"
+  - "Forget that my car registration number..."
+
+
+================================================================================
+8. FILE & DOCUMENT OPERATIONS (WRITE / RENAME / COPY / MOVE)
+================================================================================
+Creation & Opening:
+  - "Create file <filename>" (e.g. "Create file project_report")
+  - "Open file <filename>" / "Read file <filename>" (e.g. "Open notes", "Read file draft")
+  - "Search file <filename>" / "Find file <filename>"
+  - "List files on desktop" / "Show files in documents"
+
+Writing & Appending:
+  - "Write to <filename> <content>" (e.g. "Write to notes meeting starts at 5 pm")
+  - "Write in <filename> <content>" (e.g. "Write in project_notes reviewed pull request")
+  - "Take notes for <filename> <content>"
+  - "Add this to <filename> <content>" / "Note down in <filename> <content>"
+
+File Management:
+  - "Rename file <old_name> to <new_name>" (e.g. "Rename file draft to final_report")
+  - "Change name of <old_name> to <new_name>"
+  - "Copy file <source> to <target>" (e.g. "Copy file notes to notes_backup")
+  - "Move file <source> to <target>" / "Cut file <source> to <target>"
+  * Web Dashboard: Click '📁 Files' on http://localhost:5050 to visually view, edit,
+    rename, copy, and organize files!
+
+
+================================================================================
+9. SYSTEM VOLUME, SCREEN BRIGHTNESS & MEDIA CONTROLS
+================================================================================
+Volume Controls:
+  - "Volume up" / "Increase volume" / "Louder" / "Turn it up"
+  - "Volume down" / "Decrease volume" / "Lower volume" / "Quieter"
+  - "Set volume to 50%" / "Volume 80" / "Set volume to 20 percent"
+  - "Mute volume" / "Mute" / "Unmute volume" / "Unmute" / "Toggle mute"
+
+Screen Brightness:
+  - "Set brightness to 70%" / "Brightness 50"
+  - "Screen brightness 30 percent" / "Dim screen" / "Increase brightness"
+
+Media & Playlist Playback:
+  - "Play my playlist" / "Play playlist" / "Start my playlist" / "பாடல்களை ப்ளே பண்ணு"
+    (Shuffles all local audio files from your configured music folder)
+  - "Play music" / "Play some songs" / "Shuffle playlist"
+  - "Pause music" / "Resume music" / "Pause" / "Resume" / "Play pause"
+  - "Next track" / "Next song" / "Skip song"
+  - "Previous track" / "Previous song" / "Stop music"
+
+
+================================================================================
+10. HARDWARE, BATTERY, SCREENSHOT & WORKSTATION SECURITY
+================================================================================
+Workstation Security:
+  - "Lock screen" / "Lock workstation" / "Lock computer" / "Lock PC"
+
+Visual Capture:
+  - "Take screenshot" / "Screenshot" / "Capture screen"
+    (Captures full display and saves lossless PNG to data/screenshots/)
+
+Power & Diagnostics:
+  - "Battery" / "Battery status" / "Battery level" / "Check battery"
+  - "System stats" / "Check CPU usage" / "Check RAM"
+
+
+================================================================================
+11. APPLICATION LAUNCHER & PHONETIC MISPRONUNCIATIONS
+================================================================================
+Standard Launchers:
+  - "Open Notepad" / "Launch Notepad"
+  - "Open Calculator" / "Open Calc"
+  - "Open Chrome" / "Open Google Chrome"
+  - "Open Firefox" / "Open Edge"
+  - "Open Paint" / "Open MS Paint"
+  - "Open File Explorer" / "Open Explorer"
+  - "Open Antigravity IDE" / "Open Antigravity"
+  - "Close Notepad" / "Close Chrome" / "Close Calculator"
+
+Acoustic & Transcription Mispronunciation Handling:
+  * "Not pad" / "Note pad"          -> Opens Notepad
+  * "We code" / "V S Code"          -> Opens VS Code
+  * "Antigravity ide" / "Anrigravity" / "Anti gravity" -> Opens Antigravity IDE
+  * "Calculater" / "Calcultor"      -> Opens Calculator
+  * "U tube" / "You tube"           -> Opens YouTube
+  * "What's app" / "What'sapp"      -> Opens WhatsApp Web
+  * "Lead code" / "Late code"       -> Opens LeetCode
+  * "Rowan" / "Rovan login"         -> Opens Rovan College Portal
+  * "Get hub" / "Git hub"           -> Opens GitHub
+
+
+================================================================================
+12. WEB BROWSING, SEARCH & YOUTUBE PLAYBACK
+================================================================================
+Direct URL Navigation:
+  - "Open Google"       - "Open YouTube"       - "Open GitHub"
+  - "Open ChatGPT"      - "Open Gmail"         - "Open WhatsApp"
+  - "Open LinkedIn"     - "Open Reddit"        - "Open Wikipedia"
+  - "Open LeetCode"     - "Open Amazon"        - "Open Netflix"
+  - "Open W3Schools"    - "Open Udemy"         - "Open Coursera"
+  - "Open my website"   - "Open Rovan"
+
+Web Search & YouTube Video Streaming:
+  - "Search <query>" (e.g. "Search latest AI news", "Search Python fast-whisper")
+  - "Google <query>" (e.g. "Google quantum computing advances")
+  - "Play <song or video name>" (e.g. "Play Believer", "Play Hans Zimmer Interstellar")
+  - "Play lofi beats on YouTube" / "Play AC/DC Highway to Hell"
+
+
+================================================================================
+13. TIMERS, COUNTDOWNS & ALARMS
+================================================================================
+Commands:
+  - "Set a timer for 5 minutes"
+  - "Timer 30 seconds" / "Set a 10 second timer"
+  - "Remind me to call John in 1 hour and 30 minutes"
+  - "Remind me to drink water in 20 minutes"
+  - "How much time is left on my timer?"
+  - "List timers" / "Show active timers"
+  - "Cancel timer" / "Stop timer" / "Cancel all timers"
+
+
+================================================================================
+14. SMART HOME & DEVICE CONTROL HUB
+================================================================================
+Simulated Smart Devices (Syncs in real-time with Web Dashboard):
+  - "Turn on the light" / "Turn off the light"
+  - "Turn on living room light" / "Turn off lights"
+  - "Turn on the AC" / "Turn off the AC"
+  - "Set AC temperature to 22 degrees" / "Set AC to 24"
+  - "Start coffee maker" / "Turn on coffee machine" / "Turn off coffee maker"
+
+
+================================================================================
+15. GENERAL KNOWLEDGE & LLM REASONING (GEMINI / OLLAMA)
+================================================================================
+Unmatched queries, complex questions, and emotional conversations are processed
+by the local/cloud LLM brain with J.A.R.V.I.S. persona:
+  - "Explain quantum computing in simple terms."
+  - "Why is the sky blue?"
+  - "Write a short poem about clean code."
+  - "Who was Nikola Tesla?"
+  - "What is the capital of France?"
+  - "Help me brainstorm ideas for my computer vision project."
+
+
+================================================================================
+16. TAMIL VOICE COMMANDS (தமிழ் குரல் கட்டளைகள்)
+================================================================================
+Time & Weather:
+  - "நேரம் என்ன" / "மணி என்ன"         -> Tells current time
+  - "தேதி என்ன" / "இன்று என்ன தேதி"   -> Tells today's date
+  - "வானிலை என்ன" / "இன்றைய வானிலை"   -> Tells weather report
+
+Apps & Websites:
+  - "கூகுள் திற" / "கூகுள் திறக்கவும்"  -> Opens Google
+  - "யூடியூப் திற" / "ஓபன் யூடியூப்"     -> Opens YouTube
+  - "வாட்ஸ்அப் திற"                  -> Opens WhatsApp
+  - "நோட்பேட் திற"                   -> Opens Notepad
+  - "கால்குலேட்டர் திற"               -> Opens Calculator
+
+Routines & Media:
+  - "காலை வணக்கம்"                   -> Morning Routine
+  - "இரவு வணக்கம்"                   -> Night Routine
+  - "பாடல்களை ப்ளே பண்ணு" / "பாட்டு போடு" -> Plays local music playlist
+  - "கோடிங் மோடு"                   -> Coding Workspace
+  - "படிப்பு மோடு" / "ஸ்டடி மோடு"     -> Study Workspace
+  - "ஃபோகஸ் மோடு"                    -> Focus Session
+
+Notes, Diary & Dismissal:
+  - "குறிப்பு எடு: [விவரம்]"          -> Saves quick note
+  - "நோட்ஸ் படி"                     -> Reads recent notes
+  - "டைரி: [விவரம்]"                 -> Adds entry to Diary
+  - "டைரி படி"                       -> Reads diary entries
+  - "போதும்" / "நிறுத்து" / "நன்றி"     -> Puts Jarvis on standby
+  - "முழுமையாக நிறுத்து" / "கில் பண்ணு" -> Terminates Jarvis process
+
+
+================================================================================
+17. DYNAMIC CUSTOM COMMANDS & PASSKEY SECURITY
+================================================================================
+Voice Command Creation:
+  - "Add custom command: when I say who is the boss say Abinesh is the creator"
+  - "Add custom command: when I say open portfolio open url https://abinesh.dev"
+  - "Add custom command: when I say launch project open folder C:\...\AC_VoiceAssistant"
+  - "Add custom command: when I say open secret notes open file data/notes.txt"
+
+File Syntax in 'data/custom_commands.txt':
+  [secure] <trigger 1> | <trigger 2> => <action_type>: <target>
+
+Supported Action Types:
+  - url: <web address>      (e.g. "github trending => url: https://github.com/trending")
+  - app: <app or exe>       (e.g. "launch code => app: code")
+  - folder: <folder path>   (e.g. "open voice project => folder: C:\...\AC_VoiceAssistant")
+  - file: <file path>       (e.g. "open notes => file: data/notes.txt")
+  - say: <custom speech>    (e.g. "who is the boss => say: Abinesh is the creator!")
+  - cmd: <terminal command> (e.g. "[secure] run tests => cmd: python test_jarvis.py")
+
+Passkey Protection:
+  - Default Passkey PIN: 1312
+  - Spoken Authorization: Jarvis asks "Passkey required. Please state your authorization code."
+  - Inline Voice Passkey: Say "run tests passkey 1312" in a single breath.
+  - Built-in SafetyGuard blocks destructive operations (del /s, format, rm -rf, reg delete).
+
+
+================================================================================
+18. EXTERNAL PYTHON PLUGINS (plugins/*.py)
+================================================================================
+  - "What is my IP address?" / "Public IP" / "Local IP" -> Network Info Plugin
+  * Add any new Python script into the `plugins/` directory to expand Jarvis capabilities
+    automatically without editing core system files.
+
+================================================================================
