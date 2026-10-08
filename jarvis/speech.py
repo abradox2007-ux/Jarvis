@@ -1,21 +1,27 @@
-"""jarvis/speech.py — Multi-engine Text-To-Speech pipeline with Kokoro-82M ONNX, Edge-TTS, Piper, and pyttsx3."""
+"""jarvis/speech.py — Dedicated High-Fidelity Text-To-Speech engine using Microsoft Edge-TTS with persistent caching."""
 
 from __future__ import annotations
 
 import asyncio
 import ctypes
+import hashlib
 import logging
 import os
 import queue
 import re
-import subprocess
 import sys
 import tempfile
 import threading
 import time
+from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+# Single consistent voice definition
+DEFAULT_VOICE = "en-GB-RyanNeural"
+CACHE_DIR = Path("data/tts_cache")
+CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 # Thread-safe queue to pass text and done events to the TTS thread
 _speech_queue: queue.Queue[tuple[str, threading.Event | None] | None] = queue.Queue()
@@ -62,8 +68,12 @@ def stop_speaking() -> None:
             break
 
 
-def _play_audio_file_native(filepath: str) -> bool:
-    """Play an audio file (.mp3 / .wav) synchronously using native Windows MCI with interrupt support."""
+def _play_audio_file(filepath: str) -> bool:
+    """Play an audio file (.mp3) synchronously with interrupt support."""
+    if not os.path.exists(filepath) or os.path.getsize(filepath) == 0:
+        return False
+
+    # 1. Windows MCI (Zero latency native playback)
     if sys.platform == "win32":
         alias = f"jarvis_tts_{os.getpid()}_{time.time_ns()}"
         winmm = ctypes.windll.winmm
@@ -73,7 +83,6 @@ def _play_audio_file_native(filepath: str) -> bool:
             if res == 0:
                 try:
                     winmm.mciSendStringW(f'play {alias}', None, 0, None)
-                    # Poll status in chunks to allow interruption
                     status_buf = ctypes.create_unicode_buffer(128)
                     while True:
                         if _stop_playback_event.is_set():
@@ -82,99 +91,90 @@ def _play_audio_file_native(filepath: str) -> bool:
                         winmm.mciSendStringW(f'status {alias} mode', status_buf, 128, None)
                         if status_buf.value.lower() in ("stopped", ""):
                             break
-                        time.sleep(0.03)
+                        time.sleep(0.02)
                     return True
                 finally:
                     winmm.mciSendStringW(f'close {alias}', None, 0, None)
             else:
-                logger.warning("Native MCI open returned error code %d", res)
+                logger.debug("Native MCI open error code %d, trying sounddevice fallback.", res)
         except Exception as e:
-            logger.warning("Native MCI audio playback failed: %s", e)
-    return False
+            logger.debug("Native MCI playback error: %s", e)
 
-
-def _synthesize_edge_tts(text: str, voice: str, outfile: str) -> bool:
-    """Synthesize speech using Microsoft Edge-TTS with bounded timeout."""
+    # 2. SoundDevice / Pydub fallback
     try:
-        import edge_tts
+        import numpy as np
+        import sounddevice as sd
+        from pydub import AudioSegment
 
-        async def _run():
-            communicate = edge_tts.Communicate(text, voice)
-            await communicate.save(outfile)
+        audio = AudioSegment.from_file(filepath)
+        samples = np.array(audio.get_array_of_samples())
+        if audio.channels == 2:
+            samples = samples.reshape((-1, 2))
+        data = samples.astype(np.float32) / (2**15 if audio.sample_width == 2 else 2**31)
 
-        try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(asyncio.wait_for(_run(), timeout=6.0))
-            loop.close()
-        except Exception as e:
-            logger.warning("Edge-TTS timed out or connection failed: %s", e)
-            return False
-
-        return os.path.exists(outfile) and os.path.getsize(outfile) > 0
+        sd.play(data, audio.frame_rate)
+        while sd.get_stream() and sd.get_stream().active:
+            if _stop_playback_event.is_set():
+                sd.stop()
+                break
+            time.sleep(0.02)
+        return True
     except Exception as exc:
-        logger.warning("Edge-TTS synthesis error: %s", exc)
+        logger.warning("Audio playback failed: %s", exc)
         return False
 
 
-def _tts_worker() -> None:
-    """Dedicated background thread to handle TTS tasks sequentially across engines."""
-    try:
-        import comtypes
-        comtypes.CoInitialize()
-    except Exception:
-        pass
+def _get_cache_path(text: str, voice: str, rate: str, pitch: str) -> Path:
+    """Generate a persistent cache file path for the utterance."""
+    cache_key = f"{voice}_{rate}_{pitch}_{text.strip()}".encode("utf-8")
+    filename = f"{hashlib.md5(cache_key).hexdigest()}.mp3"
+    return CACHE_DIR / filename
 
-    # Load configuration
+
+def _synthesize_edge_tts(text: str, voice: str, rate: str, pitch: str, outfile: str) -> bool:
+    """Synthesize speech using Microsoft Edge-TTS with retry."""
+    import edge_tts
+
+    for attempt in range(1, 4):
+        try:
+            async def _run():
+                communicate = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch)
+                await communicate.save(outfile)
+
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(asyncio.wait_for(_run(), timeout=8.0))
+            loop.close()
+
+            if os.path.exists(outfile) and os.path.getsize(outfile) > 0:
+                return True
+        except Exception as exc:
+            logger.warning("Edge-TTS synthesis attempt %d failed: %s", attempt, exc)
+            time.sleep(0.2 * attempt)
+
+    return False
+
+
+def _tts_worker() -> None:
+    """Dedicated background thread to handle TTS tasks sequentially using single consistent voice."""
+    if sys.platform == "win32":
+        try:
+            import comtypes
+            comtypes.CoInitialize()
+        except Exception:
+            pass
+
     from jarvis.utils import load_config
     try:
         config = load_config()
     except Exception:
         config = {}
 
-    tts_engine = config.get("tts_engine", "kokoro").lower()
-    edge_voice = config.get("edge_tts_voice", "en-US-GuyNeural")
-    kokoro_model_path = config.get("kokoro_model", "bin/kokoro/kokoro-v1.0.onnx")
-    kokoro_voices_path = config.get("kokoro_voices", "bin/kokoro/voices-v1.0.bin")
-    kokoro_voice = config.get("kokoro_voice", "af_heart")
-    kokoro_speed = float(config.get("kokoro_speed", 1.0))
-    kokoro_lang = config.get("kokoro_lang", "en-us")
-    piper_path = config.get("piper_path")
-    piper_model = config.get("piper_model")
+    voice = config.get("edge_tts_voice") or DEFAULT_VOICE
+    rate = config.get("edge_tts_rate", "+0%")
+    pitch = config.get("edge_tts_pitch", "+0Hz")
 
-    # Initialize Kokoro ONNX if configured
-    kokoro_instance = None
-    if tts_engine in ("kokoro", "kokoro-onnx", "kokoro_onnx"):
-        if os.path.exists(kokoro_model_path) and os.path.exists(kokoro_voices_path):
-            try:
-                from kokoro_onnx import Kokoro
-                logger.info("Initializing Kokoro-82M ONNX TTS engine (%s)...", kokoro_voice)
-                kokoro_instance = Kokoro(kokoro_model_path, kokoro_voices_path)
-                logger.info("Kokoro-82M ONNX initialized successfully.")
-            except Exception as e:
-                logger.warning("Failed to initialize Kokoro ONNX: %s. Will fallback.", e)
-        else:
-            logger.info("Kokoro model files not found at %s. Run setup_kokoro.py to activate.", kokoro_model_path)
-
-    # Initialize PyAudio if Piper is configured
-    p_audio = None
-    pyaudio = None
-    if tts_engine == "piper" and piper_path and piper_model:
-        try:
-            import pyaudio
-            p_audio = pyaudio.PyAudio()
-        except Exception as e:
-            logger.debug("Failed to initialize PyAudio: %s", e)
-
-    # Initialize pyttsx3 as universal fallback SAPI engine
-    try:
-        import pyttsx3
-        engine = pyttsx3.init()
-        engine.setProperty("rate", 170)
-        engine.setProperty("volume", 1.0)
-    except Exception as exc:
-        logger.debug("Failed to initialize fallback SAPI engine: %s", exc)
-        engine = None
+    logger.info("Jarvis TTS Engine active: %s (Single Voice Locked)", voice)
 
     while True:
         item = _speech_queue.get()
@@ -187,121 +187,45 @@ def _tts_worker() -> None:
         _speaking_event.set()
 
         try:
-            spoken = False
+            # Check disk cache first for 0ms response
+            cache_file = _get_cache_path(text, voice, rate, pitch)
+            audio_ready = False
 
-            # 1. If Piper is explicitly selected, try Piper first
-            if not spoken and not _stop_playback_event.is_set() and tts_engine == "piper" and piper_path and piper_model:
-                if os.path.exists(piper_path) and os.path.exists(piper_model):
-                    try:
-                        command = [
-                            str(piper_path),
-                            "--model", str(piper_model),
-                            "--output-raw"
-                        ]
-                        process = subprocess.Popen(
-                            command,
-                            stdin=subprocess.PIPE,
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.DEVNULL
-                        )
-                        audio_data, _ = process.communicate(input=text.encode("utf-8"))
-
-                        if len(audio_data) > 0 and not _stop_playback_event.is_set():
-                            try:
-                                import numpy as np
-                                import sounddevice as sd
-                                samples = np.frombuffer(audio_data, dtype=np.int16)
-                                sd.play(samples, 22050)
-                                while sd.get_stream() and sd.get_stream().active:
-                                    if _stop_playback_event.is_set():
-                                        sd.stop()
-                                        break
-                                    time.sleep(0.02)
-                                spoken = True
-                            except Exception:
-                                if p_audio is not None and pyaudio is not None:
-                                    stream = p_audio.open(
-                                        format=pyaudio.paInt16,
-                                        channels=1,
-                                        rate=22050,
-                                        output=True
-                                    )
-                                    chunk_sz = 2048
-                                    for i in range(0, len(audio_data), chunk_sz):
-                                        if _stop_playback_event.is_set():
-                                            break
-                                        stream.write(audio_data[i:i + chunk_sz])
-                                    stream.stop_stream()
-                                    stream.close()
-                                    spoken = True
-                    except Exception as exc:
-                        logger.warning("Piper error: %s. Falling back.", exc)
-
-            # 2. Try Kokoro-82M ONNX (Ultra-High-Fidelity Local Neural Voice)
-            if kokoro_instance is not None and not spoken and not _stop_playback_event.is_set() and tts_engine in ("kokoro", "kokoro-onnx", "kokoro_onnx"):
-                try:
-                    import sounddevice as sd
-                    samples, sample_rate = kokoro_instance.create(
-                        text,
-                        voice=kokoro_voice,
-                        speed=kokoro_speed,
-                        lang=kokoro_lang
-                    )
-                    if len(samples) > 0 and not _stop_playback_event.is_set():
-                        sd.play(samples, sample_rate)
-                        while sd.get_stream() and sd.get_stream().active:
-                            if _stop_playback_event.is_set():
-                                sd.stop()
-                                break
-                            time.sleep(0.02)
-                        spoken = True
-                except Exception as exc:
-                    logger.warning("Kokoro synthesis/playback error: %s. Falling back.", exc)
-
-            # 3. Try Edge-TTS (High Quality Cloud Voice)
-            if not spoken and not _stop_playback_event.is_set() and tts_engine in ("edge-tts", "edge_tts", "edge"):
+            if cache_file.exists() and cache_file.stat().st_size > 0:
+                audio_ready = True
+                audio_file_to_play = str(cache_file)
+            else:
                 with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tf:
                     temp_mp3 = tf.name
-                try:
-                    if _synthesize_edge_tts(text, edge_voice, temp_mp3):
-                        if _play_audio_file_native(temp_mp3):
-                            spoken = True
-                finally:
-                    if os.path.exists(temp_mp3):
-                        try:
-                            os.remove(temp_mp3)
-                        except Exception:
-                            pass
 
-            # 4. Fallback to pyttsx3 (SAPI5 offline Windows engine)
-            if not spoken and not _stop_playback_event.is_set() and engine is not None:
-                try:
-                    engine.say(text)
-                    engine.runAndWait()
-                except Exception as exc:
-                    logger.debug("SAPI runtime error: %s", exc)
+                if _synthesize_edge_tts(text, voice, rate, pitch, temp_mp3):
                     try:
-                        import pyttsx3
-                        engine = pyttsx3.init()
-                        engine.setProperty("rate", 170)
-                        engine.setProperty("volume", 1.0)
-                        engine.say(text)
-                        engine.runAndWait()
-                    except Exception as retry_exc:
-                        logger.debug("Failed to recover SAPI engine: %s", retry_exc)
+                        # Save into persistent cache
+                        import shutil
+                        shutil.copyfile(temp_mp3, str(cache_file))
+                        audio_file_to_play = str(cache_file)
+                        audio_ready = True
+                    except Exception:
+                        audio_file_to_play = temp_mp3
+                        audio_ready = True
+                    finally:
+                        if os.path.exists(temp_mp3):
+                            try:
+                                os.remove(temp_mp3)
+                            except Exception:
+                                pass
+
+            if audio_ready and not _stop_playback_event.is_set():
+                _play_audio_file(audio_file_to_play)
+
+        except Exception as exc:
+            logger.error("TTS worker unexpected error: %s", exc)
         finally:
             _speaking_event.clear()
 
         if done_event is not None:
             done_event.set()
         _speech_queue.task_done()
-
-    # Cleanup PyAudio if it was initialized
-    if p_audio is not None:
-        try:
-            p_audio.terminate()
-        except Exception:
-            pass
 
 
 # Start the background TTS thread
@@ -311,7 +235,7 @@ _worker_thread.start()
 
 def speak(text: str, block: bool = True) -> None:
     """
-    Speak the given text aloud.
+    Speak the given text aloud using the dedicated RyanNeural voice.
     If block=True (default), waits until speech finishes.
     If block=False, queues the speech and returns immediately (non-blocking).
     """

@@ -6,7 +6,7 @@ import logging
 import os
 import re
 
-from jarvis.handlers import apps, diary, files, info, urls, ai, system, timer, whatsapp, media, smart_copy, ui_detector, routines, workspace, notes
+from jarvis.handlers import apps, diary, files, info, urls, ai, system, timer, whatsapp, media, smart_copy, ui_detector, routines, workspace, notes, gui
 from jarvis.handlers.custom_commands import CustomCommandManager
 from jarvis.plugin_manager import PluginManager
 from jarvis.ui.overlay import get_badge_overlay
@@ -272,6 +272,16 @@ def translate_tamil_to_english(cmd: str) -> str:
     if any(k in t for k in ("டைப் பண்ணு", "டைப்பிங் பார்", "சர்ச் பார்", "தேடல் பார்", "செலக்ட் பண்ணு")):
         return "select typing bar"
 
+    # 5.11 Clipboard URL / Bookmarks (Tamil)
+    if any(k in t for k in ("காப்பி செய்த லிங்க்", "காப்பி லிங்க்", "கிளிப்போர்டு லிங்க்")):
+        if any(w in t for w in ("திற", "ஓபன்")):
+            return "open copied link"
+    if any(k in t for k in ("புக்மார்க் காட்டு", "புக்மார்க்குகள் காட்டு", "புக்மார்க் பட்டியல்", "புக்மார்க்குகள்")):
+        return "list bookmarks"
+    bm_tamil = re.match(r"^(.*)\s+என்று\s+புக்மார்க்\s+செய்$", t)
+    if bm_tamil:
+        return f"bookmark this as {bm_tamil.group(1).strip()}"
+
     # 6. Create file
     create_match = re.match(r"^(.*)\s+(கோப்பு உருவாக்கு|ஃபைல் உருவாக்கு|உருவாக்கு)$", t)
     if create_match:
@@ -359,21 +369,47 @@ def split_dot_commands(text: str) -> list[str]:
 
 
 def normalize_speech_command(cmd: str) -> str:
-    """Normalize common phonetic Speech-To-Text transcription typos."""
+    """Normalize common phonetic Speech-To-Text transcription typos (Whistle & Whisper)."""
     t = cmd.strip().lower()
 
+    # Whistle greeting / wake word normalization
+    t = re.sub(r"^\b(?:hay|hey|hi)\s+jarvis\b", "hey jarvis", t)
+
     # Media playback phonetic errors:
-    # "pass the song", "pass the music", "pass song", "paws the song", "pos the song", "pose the song", "boss the song"
     t = re.sub(r"\b(?:pass|paws|pos|pose|post|boss|fast)\s+(?:the\s+|this\s+)?(song|music|playback|audio|video|track)\b", r"pause \1", t)
 
     # App name phonetic errors:
     t = re.sub(r"\b(?:not\s+pad|note\s+pad|not\s+bad)\b", "notepad", t)
     t = re.sub(r"\b(?:u\s+tube|you\s+tube)\b", "youtube", t)
     t = re.sub(r"\b(?:we\s+code|vs\s+code|v\s+s\s+code)\b", "vscode", t)
-    t = re.sub(r"\b(?:anti\s+gravity|anti\s+gravity\s+ide)\b", "antigravity", t)
+    t = re.sub(r"\b(?:anti\s*gravity(?:\s+id|\s+ide)?)\b", "antigravity", t)
     t = re.sub(r"\b(?:screen\s+shot|screen\s+short)\b", "screenshot", t)
+    t = re.sub(r"\b(?:whats\s*app|what's\s*app)\b", "whatsapp", t)
+
+    # Action verb & noun phonetic errors:
+    t = re.sub(r"^\b(?:said|sat|setted)\s+(volume|brightness)\b", r"set \1", t)
+    t = re.sub(r"\b(?:loth|loc|locke)\s+(the\s+)?(work\s*station|system|pc|screen)\b", r"lock \1\2", t)
+    t = re.sub(r"\bwork\s+station\b", "workstation", t)
+    t = re.sub(r"\bto\s+day\b", "today", t)
+    t = re.sub(r"\b(?:shedule|shedules|schedular)\b", "schedule", t)
+    t = re.sub(r"\bper\s+cent\b", "percent", t)
+
+    # Normalize spoken number words to digits for parameter extraction (volume, brightness, timers)
+    _number_words = (
+        ("twenty five", "25"), ("twenty-five", "25"), ("seventy five", "75"), ("seventy-five", "75"),
+        ("zero", "0"), ("one", "1"), ("two", "2"), ("three", "3"), ("four", "4"), ("five", "5"),
+        ("six", "6"), ("seven", "7"), ("eight", "8"), ("nine", "9"), ("ten", "10"),
+        ("eleven", "11"), ("twelve", "12"), ("thirteen", "13"), ("fourteen", "14"), ("fifteen", "15"),
+        ("sixteen", "16"), ("seventeen", "17"), ("eighteen", "18"), ("nineteen", "19"),
+        ("twenty", "20"), ("thirty", "30"), ("forty", "40"), ("fifty", "50"),
+        ("sixty", "60"), ("seventy", "70"), ("eighty", "80"), ("ninety", "90"),
+        ("hundred", "100"), ("one hundred", "100")
+    )
+    for nw, dig in _number_words:
+        t = re.sub(r"\b" + re.escape(nw) + r"\b", dig, t)
 
     return t
+
 
 
 class CommandRouter:
@@ -394,6 +430,15 @@ class CommandRouter:
         self._pending_dictation_field: dict | None = None
         self._pending_search_action: bool = False
         self._last_search_query: str | None = None
+        self._user_title: str = config.get("user_title", "Sir")
+        self._hands_free_mode: bool = bool(config.get("hands_free_mode", False))
+        self._last_created_path: str | None = None
+
+    def is_hands_free(self) -> bool:
+        return self._hands_free_mode
+
+    def set_hands_free(self, enabled: bool) -> None:
+        self._hands_free_mode = enabled
 
     def route(self, command: str) -> str:
         """Dispatch *command* to the appropriate handler and return a response."""
@@ -577,9 +622,71 @@ class CommandRouter:
 
         # ── Follow-up Dismissal / Standby ────────────────────────────────────
         if is_dismissal(cmd):
+            self.set_hands_free(False)
+            try:
+                from server import set_hands_free as server_set_hf
+                server_set_hf(False)
+            except Exception:
+                pass
             if any(w in cmd for w in ("thank", "thanks", "நன்றி")):
                 return "You're very welcome. Standing by."
             return "Going on standby. Say Hey Jarvis when you need me."
+
+        # ── Hands-Free / Continuous Listening Mode Toggle ────────────────────
+        if re.search(r"\b(?:enable|turn on|activate|start)\s+(?:hands[- ]free|continuous listening|always listening)(?:\s+mode)?\b", cmd) or cmd in (
+            "hands free", "hands free mode", "hands-free mode", "enable hands free", "enable hands free mode",
+            "turn on hands free", "turn on hands free mode", "activate hands free mode", "activate hands free",
+            "stay listening", "keep listening", "continuous mode", "enable continuous mode", "always listening mode",
+            "enable continuous listening", "hands free on", "hands-free on"
+        ):
+            self.set_hands_free(True)
+            try:
+                from server import set_hands_free as server_set_hf
+                server_set_hf(True)
+            except Exception:
+                pass
+            return f"Hands-free continuous mode activated, {self._user_title}. I will remain listening without requiring the wake word until you say standby or stop."
+
+        if re.search(r"\b(?:disable|turn off|deactivate|exit|stop)\s+(?:hands[- ]free|continuous listening|always listening)(?:\s+mode)?\b", cmd) or cmd in (
+            "disable hands free", "disable hands free mode", "disable hands-free mode",
+            "turn off hands free", "turn off hands free mode", "deactivate hands free mode", "deactivate hands free",
+            "exit hands free", "exit hands-free mode", "disable continuous mode", "normal listening mode",
+            "hands free off", "hands-free off", "disable continuous listening"
+        ):
+            self.set_hands_free(False)
+            try:
+                from server import set_hands_free as server_set_hf
+                server_set_hf(False)
+            except Exception:
+                pass
+            return f"Hands-free mode deactivated, {self._user_title}. Returning to standard wake-word standby."
+
+        # ── Contextual Agentic Orchestrator (Multi-intent / Health / Compound queries) ──
+        has_ai = bool(
+            self._config.get("gemini_api_key")
+            or os.environ.get("GEMINI_API_KEY")
+            or self._config.get("openai_api_key")
+            or self._config.get("use_ollama")
+            or self._config.get("ollama_enabled")
+            or self._config.get("primary_ai_provider") == "ollama"
+        )
+        if has_ai:
+            compound_health_markers = (
+                "feeling sick", "feel sick", "i am sick", "i'm sick", "headache", "bad headache",
+                "unwell", "fever", "pain", "not feeling well", "feeling unwell",
+                "because i'm", "because i am", "because i", "and also", "after that",
+                "heading to gym", "going to gym", "leaving for gym", "i'm tired", "i am tired",
+                "exhausted", "quiet everything", "do not disturb", "dnd mode"
+            )
+            # Detect compound action requests (e.g. "open X and create Y", "copy that and paste it in notepad")
+            is_compound_action = (
+                bool(re.search(r"\b(?:and|then|after that|also)\b", cmd))
+                and any(v in cmd for v in ("open", "create", "launch", "make", "copy", "paste", "save", "write", "switch", "type"))
+            )
+            if any(marker in cmd for marker in compound_health_markers) or is_compound_action:
+                logger.info("Contextual / compound utterance detected. Routing to Agentic Orchestrator: '%s'", command)
+                response = ai.generate_voice_response(command, self._config)
+                return self.handle_llm_json_response(response)
 
         # ── Live Custom Commands ─────────────────────────────────────────────
         matched_custom = self._custom_mgr.find_matching_command(command) or self._custom_mgr.find_matching_command(translated_command)
@@ -602,28 +709,6 @@ class CommandRouter:
         plugin_res = self._plugin_mgr.dispatch(command, self._config) or self._plugin_mgr.dispatch(translated_command, self._config)
         if plugin_res is not None:
             return plugin_res
-
-        # ── Contextual Agentic Orchestrator (Multi-intent / Health / Compound queries) ──
-        has_ai = bool(
-            self._config.get("gemini_api_key")
-            or os.environ.get("GEMINI_API_KEY")
-            or self._config.get("openai_api_key")
-            or self._config.get("use_ollama")
-            or self._config.get("ollama_enabled")
-            or self._config.get("primary_ai_provider") == "ollama"
-        )
-        if has_ai:
-            compound_health_markers = (
-                "feeling sick", "feel sick", "i am sick", "i'm sick", "headache", "bad headache",
-                "unwell", "fever", "pain", "not feeling well", "feeling unwell",
-                "because i'm", "because i am", "because i", "and also", "after that",
-                "heading to gym", "going to gym", "leaving for gym", "i'm tired", "i am tired",
-                "exhausted", "quiet everything", "do not disturb", "dnd mode"
-            )
-            if any(marker in cmd for marker in compound_health_markers):
-                logger.info("Contextual / compound utterance detected. Routing to Agentic Orchestrator: '%s'", command)
-                response = ai.generate_voice_response(command, self._config)
-                return self.handle_llm_json_response(response)
 
         # ── Long-Term Memory (RAG) ───────────────────────────────────────────
         if cmd.startswith("remember that ") or cmd.startswith("remember "):
@@ -872,6 +957,13 @@ class CommandRouter:
 
         # ── Quick Voice Notes & Thoughts ─────────────────────────────────────
         if any(cmd == p for p in (
+            "read today's notes", "read todays notes", "read notes today",
+            "show today's notes", "show todays notes", "show notes today",
+            "today's notes", "todays notes"
+        )) or re.search(r"\b(?:read|show|get|view) (?:today'?s notes|notes for today)\b", cmd):
+            return notes.read_notes(today_only=True)
+
+        if any(cmd == p for p in (
             "read my notes", "read notes", "show my notes", "show notes",
             "what are my notes", "read quick notes", "show quick notes", "list notes"
         )):
@@ -908,12 +1000,49 @@ class CommandRouter:
         if "weather" in cmd:
             return info.tell_weather(self._weather_city, self._weather_country)
 
+        # ── Daily Schedule / Agenda ──────────────────────────────────────────
+        if (
+            any(cmd == p for p in (
+                "schedule", "my schedule", "today's schedule", "todays schedule",
+                "what's my schedule", "whats my schedule", "what is my schedule",
+                "what's my schedule today", "whats my schedule today", "what is my schedule today",
+                "agenda", "my agenda", "today's agenda", "todays agenda",
+                "what's my agenda", "whats my agenda", "what is my agenda",
+                "what's my agenda today", "whats my agenda today", "what is my agenda today",
+                "today's plan", "todays plan", "today's plans", "todays plans", "plans today",
+                "tasks today", "today's tasks", "todays tasks", "what do i have today",
+                "what's on my plate today", "what is on my plate today",
+                "check my schedule", "show my schedule", "read my schedule", "view my schedule",
+                "check schedule", "show schedule", "read schedule", "view schedule"
+            ))
+            or re.search(r"\b(?:what(?:'s| is) (?:my |the )?(?:daily )?(?:schedule|agenda|plan)|my schedule|today'?s (?:schedule|agenda|plan|tasks)|(?:schedule|agenda|plan|tasks) (?:for )?today|daily schedule)\b", cmd)
+            or re.search(r"\b(?:(?:check|show|read|get|view) (?:my |the |today'?s )?schedule)\b", cmd)
+            or re.search(r"\b(?:what(?:'s| is) (?:scheduled|planned) (?:for )?today)\b", cmd)
+        ):
+            return routines.get_today_schedule_summary()
+
         # ── Time ─────────────────────────────────────────────────────────────
-        if any(p in cmd for p in ("time", "clock")):
+        if (
+            any(cmd == p for p in (
+                "time", "the time", "what time is it", "what's the time", "whats the time",
+                "what is the time", "tell me the time", "current time", "clock", "check time",
+                "what is current time", "what's current time", "whats current time"
+            ))
+            or re.search(r"\b(?:what(?:'s| is) (?:the |current )?time|what time is it|tell me the time|current time)\b", cmd)
+        ):
             return info.tell_time()
 
         # ── Date ─────────────────────────────────────────────────────────────
-        if any(p in cmd for p in ("date", "today")):
+        if (
+            any(cmd == p for p in (
+                "date", "the date", "today's date", "todays date", "what's the date",
+                "whats the date", "what is the date", "what is today's date", "what is todays date",
+                "tell me the date", "tell me today's date", "what date is today", "what date is it",
+                "what day is today", "what day is it", "day and date", "time and date", "date and time",
+                "what is today", "what's today", "whats today", "what day today"
+            ))
+            or re.search(r"\b(?:what(?:'s| is) (?:today'?s |the )?date|today'?s date|tell me (?:the |today'?s )?date|what date is (?:it|today)|what day is (?:it|today)|what(?:'s| is) today)\b", cmd)
+        ):
             return info.tell_date()
 
         # ── Create file ──────────────────────────────────────────────────────
@@ -921,11 +1050,73 @@ class CommandRouter:
             name = translated_command[len("create file "):].strip()
             return files.create_file(name)
 
+        # ── Create folder / directory ─────────────────────────────────────────
+        if (
+            cmd.startswith("create folder ")
+            or cmd.startswith("create directory ")
+            or cmd.startswith("make folder ")
+            or cmd.startswith("make a folder ")
+            or cmd.startswith("make directory ")
+            or cmd.startswith("create project folder ")
+        ):
+            folder_match = re.match(r"^(?:create|make)\s+(?:a\s+)?(?:project\s+)?(?:folder|directory)\s+(?:called|named|as)?\s*(.+)$", cmd)
+            if folder_match:
+                fname = folder_match.group(1).strip()
+                _, res, full_path = files.create_folder(fname)
+                if full_path:
+                    self._last_created_path = full_path
+                return res
+
+        # ── Open folder ──────────────────────────────────────────────────────
+        if cmd.startswith("open folder ") or cmd.startswith("explore folder "):
+            fname = re.sub(r"^(?:open|explore)\s+folder\s+", "", cmd).strip()
+            return files.open_folder(fname, self._search_paths)
+
+        # ── Open Copied Link / Bookmark Commands ─────────────────────────────
+        if (
+            cmd in (
+                "open copied link", "open copied url", "open copied website",
+                "open link from clipboard", "open url from clipboard", "open website from clipboard",
+                "open link in clipboard", "open url in clipboard", "open website in clipboard",
+                "open clipboard link", "open clipboard url", "open clipboard",
+                "open copy link", "open the copied link", "open the link from clipboard",
+                "open the url from clipboard"
+            )
+            or re.match(r"^open\s+(?:the\s+)?(?:copied|clipboard)\s*(?:link|url|website)?$", cmd)
+            or re.match(r"^open\s+(?:the\s+)?(?:link|url|website)\s+(?:from|in)\s+(?:the\s+)?clipboard$", cmd)
+        ):
+            return urls.open_copied_url()
+
+        bookmark_match = re.match(
+            r"^(?:bookmark|save)\s+(?:this|the|clipboard|my)?\s*(?:link|url|website|site|page)?\s*(?:as|called|named|to)\s+(.+)$",
+            cmd,
+        )
+        if not bookmark_match:
+            bookmark_match = re.match(r"^bookmark\s+(?:this|clipboard|link|url)\s+as\s+(.+)$", cmd)
+
+        if bookmark_match:
+            nickname = bookmark_match.group(1).strip()
+            return urls.bookmark_url_from_clipboard(nickname, self._url_aliases)
+
+        if cmd in (
+            "list bookmarks", "show bookmarks", "what are my bookmarks",
+            "list url aliases", "show url aliases", "my bookmarks", "view bookmarks",
+            "list saved websites", "show saved websites", "list urls", "show urls"
+        ):
+            return urls.list_bookmarks(self._url_aliases)
+
         # ── Smart Contextual / Semantic Text Copy to Clipboard ──────────────
         if re.search(r"\b(?:copy|clipboard)\b", cmd) or any(k in cmd for k in ("நகலெடு", "காப்பி")):
             is_file_op = bool(re.match(r"^(?:please\s+|can\s+you\s+)?copy\s+(?:file\s+)?[a-zA-Z0-9_\- .]+\s+(?:to|as|and\s+paste)\s+[a-zA-Z0-9_\- .]+$", cmd)) and not any(k in cmd for k in ("clipboard", "clip board"))
             is_notes_op = bool(re.match(r"^(?:please\s+|can\s+you\s+)?copy\s+(?:this\s+)?(?:to|in|into)\s+([a-zA-Z0-9_\- .]+?)(?:\s+(?:that|saying|:|content|is)\s+|\s*:\s*|\s+)(.+)$", cmd)) and not any(k in cmd for k in ("clipboard", "clip board"))
-            if not is_file_op and not is_notes_op:
+            is_clipboard_url_op = (
+                bool(re.match(r"^open\s+(?:the\s+)?(?:copied|clipboard)\s*(?:link|url|website)?$", cmd))
+                or bool(re.match(r"^open\s+(?:the\s+)?(?:link|url|website)\s+(?:from|in)\s+(?:the\s+)?clipboard$", cmd))
+                or cmd.startswith("bookmark")
+                or "bookmark as" in cmd
+                or "save link as" in cmd
+            )
+            if not is_file_op and not is_notes_op and not is_clipboard_url_op:
                 return smart_copy.handle_smart_copy(command=translated_command, config=self._config, last_search=self._last_search_query)
 
         # ── UI Input Field Selector & Overlay ("select", "search", "dial", "type") ──
@@ -1302,29 +1493,32 @@ class CommandRouter:
             "battery_status", "check_battery", "battery", "power_status",
             "tell_time", "time", "tell_date", "date", "tell_weather", "weather",
             "list_memories", "show_memories", "list_timers", "show_timers",
-            "read_diary", "system_status", "status"
+            "read_diary", "system_status", "status",
+            "get_schedule", "today_schedule", "schedule", "agenda"
         }
 
-        if action:
-            if action == "multi":
-                results = []
-                commands = parsed.get("commands", [])
-                for cmd in commands:
-                    res = self.execute_single_action(cmd)
-                    results.append(res)
-                if custom_reply:
-                    return custom_reply
-                return "Executed actions: " + " and ".join(results)
-            else:
-                action_res = self.execute_single_action(parsed)
-                # For query actions, action_res contains live system data (e.g. battery percentage, weather, time)
-                # Prioritize the actual answer rather than discarding it for a generic placeholder.
-                if action in query_actions and action_res:
-                    return action_res
-                # If LLM gave an in-character cultured reply for state actions, prefer it over robotic status strings
-                if custom_reply:
-                    return custom_reply
+        commands = parsed.get("commands") or parsed.get("actions") or parsed.get("plan")
+        if action in ("multi", "sequence", "workflow", "plan") or (isinstance(commands, list) and len(commands) > 0):
+            results = []
+            if isinstance(commands, list):
+                for cmd_item in commands:
+                    if isinstance(cmd_item, dict):
+                        res = self.execute_single_action(cmd_item)
+                        if res:
+                            results.append(res)
+            if custom_reply:
+                return custom_reply
+            return "Executed actions: " + " and ".join(results) if results else "Completed actions."
+        elif action:
+            action_res = self.execute_single_action(parsed)
+            # For query actions, action_res contains live system data (e.g. battery percentage, weather, time)
+            # Prioritize the actual answer rather than discarding it for a generic placeholder.
+            if action in query_actions and action_res:
                 return action_res
+            # If LLM gave an in-character cultured reply for state actions, prefer it over robotic status strings
+            if custom_reply:
+                return custom_reply
+            return action_res
 
         if custom_reply:
             return custom_reply
@@ -1340,6 +1534,20 @@ class CommandRouter:
         # 0. Core Termination
         if action in ("terminate_jarvis", "kill_jarvis", "kill_assistant", "shutdown_jarvis", "terminate", "kill", "exit"):
             return system.terminate_jarvis()
+
+        # 0.1 Hands-Free / Continuous Listening Mode
+        elif action in ("set_hands_free", "hands_free_mode", "hands_free"):
+            enabled = bool(action_dict.get("enabled", True))
+            self.set_hands_free(enabled)
+            try:
+                from server import set_hands_free as server_set_hf
+                server_set_hf(enabled)
+            except Exception:
+                pass
+            if enabled:
+                return f"Hands-free continuous mode activated, {self._user_title}. I will remain listening without requiring the wake word."
+            else:
+                return f"Hands-free mode deactivated, {self._user_title}. Returning to standard wake-word standby."
 
         # 1. Smart home control
         elif action == "control_device":
@@ -1370,12 +1578,31 @@ class CommandRouter:
             name = action_dict.get("name", "untitled")
             return files.create_file(name)
 
+        # 2.1 Create folder / directory / project folder
+        elif action in ("create_folder", "create_directory", "make_folder", "mkdir", "create_project"):
+            from jarvis.handlers import files
+            folder_name = action_dict.get("name") or action_dict.get("folder") or action_dict.get("path", "untitled_folder")
+            parent = action_dict.get("parent") or action_dict.get("parent_path")
+            success, res, full_path = files.create_folder(folder_name, parent)
+            if success and full_path:
+                self._last_created_path = full_path
+            return res
+
+        # 2.2 Open folder / directory
+        elif action in ("open_folder", "explore_folder"):
+            from jarvis.handlers import files
+            folder_name = action_dict.get("name") or action_dict.get("folder") or action_dict.get("path", "")
+            return files.open_folder(folder_name, self._search_paths)
+
         # 3. Open application
         elif action == "open_app":
             from jarvis.handlers import apps
             name = action_dict.get("name")
+            target_path = action_dict.get("path") or action_dict.get("target") or action_dict.get("folder") or action_dict.get("project")
+            if not target_path and self._last_created_path:
+                target_path = self._last_created_path
             if name:
-                return apps.open_app(name, self._app_aliases)
+                return apps.open_app(name, self._app_aliases, path=target_path)
             return "No application name provided."
 
         # 4. Play song
@@ -1498,6 +1725,16 @@ class CommandRouter:
             url_target = action_dict.get("url") or action_dict.get("target") or action_dict.get("name", "")
             return urls.open_url(url_target, self._url_aliases)
 
+        elif action in ("open_clipboard_url", "open_copied_url", "open_clipboard"):
+            return urls.open_copied_url()
+
+        elif action in ("bookmark_url", "bookmark_link", "save_url_alias"):
+            name = action_dict.get("name") or action_dict.get("nickname") or action_dict.get("alias", "")
+            return urls.bookmark_url_from_clipboard(name, self._url_aliases)
+
+        elif action in ("list_bookmarks", "show_bookmarks", "list_url_aliases"):
+            return urls.list_bookmarks(self._url_aliases)
+
         # 8.8 Timer / Countdown
         elif action in ("set_timer", "create_timer", "timer"):
             secs = action_dict.get("duration_seconds") or action_dict.get("seconds")
@@ -1593,6 +1830,8 @@ class CommandRouter:
             return info.generate_startup_briefing(self._config)
 
         # 10. Proactive Wellness & Agentic Routines
+        elif action in ("get_schedule", "today_schedule", "schedule", "agenda"):
+            return routines.get_today_schedule_summary()
         elif action in ("care_mode", "sick_mode", "wellness_mode"):
             reason = action_dict.get("reason", "")
             return routines.run_care_mode(self._config, reason=reason)
@@ -1608,5 +1847,22 @@ class CommandRouter:
             return workspace.launch_workspace("coding", self._config)
         elif action in ("study_workspace", "study_mode"):
             return workspace.launch_workspace("study", self._config)
+
+        # 11. GUI & Desktop Automation Actions
+        elif action in ("hotkey", "press_hotkey", "press_keys", "key_combination"):
+            keys = action_dict.get("keys") or action_dict.get("key", "")
+            return gui.press_hotkey(keys)
+
+        elif action in ("clipboard", "clipboard_action"):
+            cmd_type = action_dict.get("command") or action_dict.get("action_type") or action_dict.get("operation", "copy")
+            return gui.clipboard_action(cmd_type)
+
+        elif action in ("type_text", "type", "dictate"):
+            txt = action_dict.get("text") or action_dict.get("content", "")
+            press_enter = bool(action_dict.get("press_enter", False) or action_dict.get("enter", False))
+            return gui.type_text(txt, press_enter=press_enter)
+
+        elif action in ("switch_window", "next_window"):
+            return gui.switch_window()
 
         return f"Action '{action}' is not supported yet."

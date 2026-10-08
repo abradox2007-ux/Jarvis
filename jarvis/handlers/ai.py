@@ -129,11 +129,55 @@ You MUST respond ONLY with a single JSON object in one of the following formats 
 29. Terminate Assistant:
     {{"action": "terminate_jarvis", "reply": "Powering down core systems. Goodbye, {user_title}."}}
 
-Contextual & Empathetic Reasoning Rules:
-- If the user expresses physical distress (e.g., "I'm feeling sick", "I have a headache", "I'm exhausted"), prioritize their well-being: trigger "care_mode", speak with authentic British warmth and empathy, and ask a proactive follow-up question (such as offering to contact someone, reschedule tasks, or set a timer).
-- If the user provides a compound request with multiple steps, emit a "multi" action containing all necessary sub-actions.
+30. Hands-Free / Continuous Listening Mode:
+    {{"action": "set_hands_free", "enabled": true|false, "reply": "Hands-free continuous mode is now active, {user_title}."}}
 
-Always respond in English with valid JSON."""
+31. Create Folder / Project Directory:
+    {{"action": "create_folder", "name": "folder_or_project_name", "reply": "Created project folder 'the sudo project', {user_title}."}}
+
+32. Open Folder:
+    {{"action": "open_folder", "name": "folder_name", "reply": "Opening your project folder, {user_title}."}}
+
+33. Keyboard Hotkey / Shortcuts:
+    {{"action": "hotkey", "keys": "ctrl+c"|"ctrl+v"|"ctrl+x"|"ctrl+s"|"alt+tab"|"enter", "reply": "Executed shortcut, {user_title}."}}
+
+34. OS Clipboard Operation:
+    {{"action": "clipboard", "command": "copy"|"paste"|"cut"|"select_all"|"save", "reply": "Completed clipboard operation, {user_title}."}}
+
+35. Type Text into Active Window:
+    {{"action": "type_text", "text": "text_content", "press_enter": true|false, "reply": "Typed that into the active window, {user_title}."}}
+
+36. Switch Window:
+    {{"action": "switch_window", "reply": "Switched window for you, {user_title}."}}
+
+37. Get Today's Schedule / Agenda / Plan:
+    {{"action": "get_schedule", "reply": "Checking your schedule for today, {user_title}."}}
+
+Agentic Multi-Step Workflow Rules (CRITICAL):
+- If the user provides a compound request with multiple actions (connected by 'and', 'then', or multiple tasks), decompose it into a sequence inside 'multi' action!
+- Example 1: "open antigravity ide and create a new project folder, name it as 'the sudo project'"
+  Emit:
+  {{"action": "multi", "commands": [
+     {{"action": "create_folder", "name": "the sudo project"}},
+     {{"action": "open_app", "name": "antigravity", "path": "the sudo project"}}
+  ], "reply": "I've created 'the sudo project' folder and launched Antigravity IDE for you, {user_title}."}}
+- Example 2: "copy that and paste it in notepad"
+  Emit:
+  {{"action": "multi", "commands": [
+     {{"action": "clipboard", "command": "copy"}},
+     {{"action": "open_app", "name": "notepad"}},
+     {{"action": "clipboard", "command": "paste"}}
+  ], "reply": "Copied your selection and pasted it into Notepad, {user_title}."}}
+- Example 3: "make a folder called website and open it in vscode"
+  Emit:
+  {{"action": "multi", "commands": [
+     {{"action": "create_folder", "name": "website"}},
+     {{"action": "open_app", "name": "vscode", "path": "website"}}
+  ], "reply": "Created folder 'website' and opened it in VS Code, {user_title}."}}
+
+Contextual & Empathetic Reasoning Rules:
+- If the user expresses physical distress (e.g., "I'm feeling sick", "I have a headache", "I'm exhausted"), prioritize their well-being: trigger "care_mode", speak with authentic British warmth and empathy, and ask a proactive follow-up question.
+- Always respond in English with valid JSON."""
 
 
 def clean_and_parse_json(text: str) -> dict:
@@ -273,10 +317,14 @@ def call_ollama(prompt: str, config: dict) -> Optional[str]:
         import requests
         system_instruction = build_system_instruction(config)
         
-        # Test models to try (e.g. llama3.2, llama3.2:latest)
+        # Test models to try (e.g. llama3.2, llama3.2:latest, llama3.2:3b)
         models_to_try = [model]
         if ":" not in model:
             models_to_try.append(f"{model}:latest")
+        if "llama3.2" in model:
+            for fallback in ("llama3.2:latest", "llama3.2", "llama3.2:3b", "llama3.2:1b"):
+                if fallback not in models_to_try:
+                    models_to_try.append(fallback)
 
         for m_name in models_to_try:
             try:
@@ -291,7 +339,7 @@ def call_ollama(prompt: str, config: dict) -> Optional[str]:
                     "keep_alive": keep_alive,
                     "options": {
                         "temperature": temperature,
-                        "num_predict": 180
+                        "num_predict": 250
                     }
                 }
                 response = requests.post(f"{url.rstrip('/')}/api/chat", json=data, timeout=25)

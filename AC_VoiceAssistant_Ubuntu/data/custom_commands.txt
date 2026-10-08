@@ -1,8 +1,0 @@
-my shortcut => say: Hello test!
-who is the boss  => say: Abinesh is the creator
-what's my favourite colour => say: it's blue
-open my website | my website | abinesh resume | abinesh website => url:https://abinesh-resume.netlify.app/
-who is my best friend => say: your best friend's name is Charan Tej
-open antigravity ide | open antigravity | open anrigravity ide | antigravity ide | antigravity | anrigravity ide | anti gravity | anti gravity ide => app:"C:\Users\Abinesh\AppData\Local\Programs\Antigravity IDE\Antigravity IDE.exe"
-
-

@@ -72,11 +72,65 @@ class AudioNoiseFilter:
         return cleaned_samples.tobytes()
 
 
+def build_whistle_keywords(config: dict) -> list[str]:
+    """
+    Build a comprehensive, deduplicated keyword biasing list for Cactus Whistle STT.
+    Covers command verbs, controls, virtual devices, numbers, apps, URLs, and workspaces.
+    """
+    base_keywords = [
+        "Jarvis", "Hey Jarvis", "open", "launch", "close", "play", "pause", "resume", "stop",
+        "next", "previous", "mute", "unmute", "volume", "increase", "decrease", "set", "percent",
+        "fifty", "hundred", "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+        "battery", "status", "weather", "today", "tomorrow", "time", "date", "screenshot",
+        "lock", "workstation", "timer", "reminder", "alarm", "diary", "notes", "note",
+        "create", "file", "folder", "write", "rename", "copy", "cut", "delete", "search",
+        "Google", "YouTube", "WhatsApp", "Antigravity", "Antigravity IDE", "Notepad",
+        "Calculator", "Chrome", "Firefox", "Edge", "Explorer", "Excel", "ChatGPT", "GitHub",
+        "Gmail", "LeetCode", "Rovan", "good morning", "morning briefing", "night routine",
+        "good night", "schedule", "routine", "coding", "study", "research", "lights", "light",
+        "air conditioner", "ac", "coffee", "coffee machine", "terminate", "shutdown", "exit", "quit"
+    ]
+
+    # Explicit config keywords
+    config_keywords = config.get("whistle_keywords", [])
+    if isinstance(config_keywords, list):
+        base_keywords.extend(config_keywords)
+
+    # App aliases
+    app_aliases = config.get("app_aliases", {})
+    if isinstance(app_aliases, dict):
+        for k in app_aliases.keys():
+            base_keywords.append(k)
+
+    # URL aliases
+    url_aliases = config.get("url_aliases", {})
+    if isinstance(url_aliases, dict):
+        for k in url_aliases.keys():
+            base_keywords.append(k)
+
+    # Workspaces
+    workspaces = config.get("workspaces", {})
+    if isinstance(workspaces, dict):
+        for k in workspaces.keys():
+            base_keywords.append(k)
+
+    # Deduplicate preserving case & order
+    seen = set()
+    deduped = []
+    for kw in base_keywords:
+        s = str(kw).strip()
+        if s and s.lower() not in seen:
+            seen.add(s.lower())
+            deduped.append(s)
+
+    return deduped
+
+
 class Listener:
     def __init__(
         self,
         device_index: int | None = None,
-        stt_engine: str = "google",
+        stt_engine: str = "whisper",
         whisper_model: str = "base",
         on_network_error: Callable[[], None] | None = None,
         on_mic_error: Callable[[], None] | None = None,
@@ -91,6 +145,7 @@ class Listener:
         self._on_network_error = on_network_error or (lambda: None)
         self._on_mic_error = on_mic_error or (lambda: None)
 
+        self._whistle_model_instance = None
         self._whisper_model_instance = None
         self._openwakeword_model = None
         self._vad = None
@@ -101,6 +156,7 @@ class Listener:
         except Exception:
             config = {}
 
+        self._whistle_keywords = build_whistle_keywords(config)
         self._wake_word_engine = config.get("wake_word_engine", "openwakeword")
         self._wake_word_model_name = config.get("wake_word_model", "hey_jarvis")
         self._wake_word_threshold = config.get("wake_word_threshold", 0.38)
@@ -109,8 +165,20 @@ class Listener:
         self._vad_initial_timeout = config.get("vad_initial_timeout", 7.0)
         self._vad_model_path = config.get("vad_model_path", "bin/vad/silero_vad.onnx")
 
-        # 1. Preload STT Whisper with multi-threaded CPU optimization
-        if self._stt_engine == "whisper":
+        # 1. Initialize Cactus Whistle STT (Primary if stt_engine == 'whistle')
+        if self._stt_engine == "whistle":
+            logger.info("Initializing Cactus Whistle STT engine with %d biased keywords...", len(self._whistle_keywords))
+            try:
+                import needle
+                self._whistle_model_instance = needle.Whistle()
+                logger.info("Cactus Whistle STT engine initialized successfully.")
+            except Exception as e:
+                logger.warning("Failed to initialize Cactus Whistle: %s. Will fallback to Whisper/Google.", e)
+                self._whistle_model_instance = None
+
+        # 2. Preload faster-whisper (if whisper is primary OR whisper_fallback is enabled)
+        whisper_fallback_enabled = config.get("whisper_fallback", True)
+        if self._stt_engine == "whisper" or (self._stt_engine == "whistle" and whisper_fallback_enabled):
             logger.info("Preloading faster-whisper model '%s' (low-latency CPU INT8)...", self._whisper_model)
             try:
                 from faster_whisper import WhisperModel
@@ -126,6 +194,7 @@ class Listener:
             except Exception as e:
                 logger.warning("Failed to preload faster-whisper: %s. Will fallback to Google STT.", e)
                 self._whisper_model_instance = None
+
 
         # 2. Initialize openWakeWord
         if self._wake_word_engine == "openwakeword":
@@ -374,11 +443,30 @@ class Listener:
         return None
 
     def _transcribe(self, audio: sr.AudioData | None) -> str | None:
-        """Transcribe audio with primary engine and anti-hallucination validation."""
+        """Transcribe audio with primary engine (Whistle/Whisper/Google) and anti-hallucination fallbacks."""
         if audio is None:
             return None
 
-        # 1. Try Whisper if enabled
+        # 1. Try Cactus Whistle if enabled as primary
+        if self._stt_engine == "whistle" and self._whistle_model_instance is not None:
+            try:
+                raw_bytes = audio.get_raw_data(convert_rate=16000, convert_width=2)
+                samples = np.frombuffer(raw_bytes, dtype=np.int16).astype(np.float32) / 32768.0
+                if len(samples) > 0:
+                    res = self._whistle_model_instance.transcribe(
+                        samples,
+                        language="en",
+                        keywords=self._whistle_keywords
+                    )
+                    text = res.get("text", "").strip() if res else ""
+                    if text and len(text) > 1:
+                        ttft = res.get("ttft_ms", 0.0)
+                        logger.info("Transcribed (Whistle, TTFT: %.1fms): '%s'", ttft, text)
+                        return text
+            except Exception as exc:
+                logger.warning("Whistle transcription failed: %s. Trying fallbacks...", exc)
+
+        # 2. Try Whisper if enabled as primary
         if self._stt_engine == "whisper" and self._whisper_model_instance is not None:
             try:
                 import io
@@ -417,7 +505,7 @@ class Listener:
             except Exception as exc:
                 logger.warning("Whisper transcription failed: %s. Trying Google STT...", exc)
 
-        # 2. Try Google Speech Recognition (default or fallback)
+        # 3. Try Google Speech Recognition (default or fallback)
         try:
             text = self._recognizer.recognize_google(audio, language="en-IN")
             if text and text.strip():
@@ -438,7 +526,7 @@ class Listener:
             self._on_network_error()
             return None
 
-        # 3. If Whisper was not primary but Google failed, try Whisper as fallback
+        # 4. If Whisper was not primary (e.g. Whistle was primary, and Google failed or offline), try Whisper as fallback
         if self._whisper_model_instance is not None and self._stt_engine != "whisper":
             try:
                 import io

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import re
+import sys
 from pathlib import Path
 
 from jarvis.utils import find_best_file_match, sanitize_filename
@@ -251,3 +253,69 @@ def save_file_content(name: str, content: str) -> bool:
         return True
     except Exception:
         return False
+
+
+def create_folder(name: str, parent: str | None = None) -> tuple[bool, str, str]:
+    """
+    Create a new directory/folder.
+    Returns (success: bool, response: str, folder_path: str).
+    """
+    clean_name = name.strip().strip("'\"")
+    clean_name = re.sub(
+        r"^(?:folder|directory|project(?:\s+folder)?)\s+(?:called|named|as)?\s*",
+        "",
+        clean_name,
+        flags=re.IGNORECASE
+    ).strip().strip("'\"")
+
+    if not clean_name:
+        return False, "Please specify a folder name.", ""
+
+    try:
+        if parent and str(parent).strip():
+            parent_dir = Path(parent).expanduser()
+        else:
+            desktop = Path.home() / "Desktop"
+            parent_dir = desktop if desktop.exists() else Path.cwd()
+
+        target_path = parent_dir / clean_name
+        target_path.mkdir(parents=True, exist_ok=True)
+        return True, f"Created folder '{clean_name}'.", str(target_path)
+    except Exception as exc:
+        return False, f"Could not create folder '{clean_name}': {exc}", ""
+
+
+def open_folder(name: str, search_paths: list[str] | None = None) -> str:
+    """Open a directory in File Explorer or system file manager."""
+    clean_name = name.strip().strip("'\"")
+    clean_name = re.sub(
+        r"^(?:folder|directory|project(?:\s+folder)?)\s+(?:called|named|as)?\s*",
+        "",
+        clean_name,
+        flags=re.IGNORECASE
+    ).strip().strip("'\"")
+
+    target_path = Path(clean_name).expanduser()
+    if not target_path.exists():
+        desktop_target = Path.home() / "Desktop" / clean_name
+        if desktop_target.exists():
+            target_path = desktop_target
+        elif search_paths:
+            for p in search_paths:
+                cand = Path(p).expanduser() / clean_name
+                if cand.exists():
+                    target_path = cand
+                    break
+
+    if not target_path.exists():
+        return f"Could not find folder '{clean_name}'."
+
+    try:
+        if sys.platform == "win32":
+            os.startfile(str(target_path))
+        else:
+            import subprocess
+            subprocess.Popen(["xdg-open", str(target_path)])
+        return f"Opening folder '{target_path.name}'."
+    except Exception as exc:
+        return f"Failed to open folder '{clean_name}': {exc}"

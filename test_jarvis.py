@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 from jarvis.router import CommandRouter
 from jarvis.utils import find_best_file_match, load_config, sanitize_filename
@@ -87,6 +88,24 @@ class RouterTests(unittest.TestCase):
     def test_date_query(self) -> None:
         result = self.router.route("what's the date")
         self.assertIn("today is", result.lower())
+        result2 = self.router.route("what is today's date")
+        self.assertIn("today is", result2.lower())
+
+    def test_schedule_query(self) -> None:
+        with patch("jarvis.handlers.routines.get_today_schedule_summary", return_value="Your schedule is clear for today.") as mock_sched:
+            result = self.router.route("what's my schedule today")
+            self.assertIn("schedule is clear", result.lower())
+            mock_sched.assert_called_once()
+
+        with patch("jarvis.handlers.routines.get_today_schedule_summary", return_value="Your schedule is clear for today.") as mock_sched:
+            result2 = self.router.route("What's my shedule today , Jarvis")
+            self.assertIn("schedule is clear", result2.lower())
+            mock_sched.assert_called_once()
+
+        with patch("jarvis.handlers.routines.get_today_schedule_summary", return_value="Your schedule is clear for today.") as mock_sched:
+            result3 = self.router.route("my schedule")
+            self.assertIn("schedule is clear", result3.lower())
+            mock_sched.assert_called_once()
 
     def test_weather_query(self) -> None:
         with patch("jarvis.handlers.info.tell_weather", return_value="The weather in Chennai is clear."):
@@ -200,7 +219,7 @@ class RouterTests(unittest.TestCase):
              patch("jarvis.handlers.apps.open_app", return_value="Opening Notepad.") as mock_app:
             res = router.route("please boot up my text editor")
             mock_ai.assert_called_once_with("please boot up my text editor", cfg)
-            mock_app.assert_called_once_with("notepad", router._app_aliases)
+            mock_app.assert_called_once_with("notepad", router._app_aliases, path=None)
             self.assertEqual(res, "Opening Notepad.")
 
     def test_orchestrator_mode_typo_correction(self) -> None:
@@ -295,6 +314,29 @@ class RouterTests(unittest.TestCase):
 
         res2 = self.router.route("thank you")
         self.assertIn("welcome", res2.lower())
+
+    def test_hands_free_mode_toggle(self) -> None:
+        self.assertFalse(self.router.is_hands_free())
+
+        # Enable hands free
+        res = self.router.route("enable hands free mode")
+        self.assertIn("hands-free continuous mode activated", res.lower())
+        self.assertTrue(self.router.is_hands_free())
+
+        # Dismissal resets hands free
+        res_dis = self.router.route("standby")
+        self.assertIn("standby", res_dis.lower())
+        self.assertFalse(self.router.is_hands_free())
+
+        # Re-enable using alternative phrasing
+        res2 = self.router.route("stay listening")
+        self.assertIn("hands-free continuous mode activated", res2.lower())
+        self.assertTrue(self.router.is_hands_free())
+
+        # Disable hands free
+        res3 = self.router.route("disable hands free mode")
+        self.assertIn("hands-free mode deactivated", res3.lower())
+        self.assertFalse(self.router.is_hands_free())
 
     def test_dot_command_execution(self) -> None:
         from jarvis.router import split_dot_commands
@@ -1336,9 +1378,248 @@ class UIDetectorAndOverlayTests(unittest.TestCase):
             self.assertEqual(res_code, "Workspace active.")
             mock_ws.assert_called_with("coding", self.config)
 
+    def test_urls_get_clipboard_url(self) -> None:
+        from jarvis.handlers import urls
+        with patch("pyperclip.paste", return_value="https://github.com/trending?since=daily"):
+            self.assertEqual(urls.get_clipboard_url(), "https://github.com/trending?since=daily")
+
+        with patch("pyperclip.paste", return_value="Check this out: github.com/trending/python"):
+            self.assertEqual(urls.get_clipboard_url(), "https://github.com/trending/python")
+
+        with patch("pyperclip.paste", return_value="just some random text without link"):
+            self.assertIsNone(urls.get_clipboard_url())
+
+    def test_urls_open_copied_url(self) -> None:
+        from jarvis.handlers import urls
+        with patch("pyperclip.paste", return_value="https://en.wikipedia.org/wiki/Artificial_intelligence"), \
+             patch("jarvis.handlers.urls.webbrowser.open") as mock_open:
+            res = urls.open_copied_url()
+            mock_open.assert_called_once_with("https://en.wikipedia.org/wiki/Artificial_intelligence")
+            self.assertIn("Opening copied link", res)
+
+        with patch("pyperclip.paste", return_value="not a url"):
+            res_fail = urls.open_copied_url()
+            self.assertIn("No valid link", res_fail)
+
+    def test_urls_bookmark_from_clipboard_and_list(self) -> None:
+        from jarvis.handlers import urls
+        with tempfile.NamedTemporaryFile("w+", delete=False, suffix=".json") as tf:
+            tf.write(json.dumps({"url_aliases": {}}))
+            temp_config = tf.name
+
+        try:
+            aliases: dict[str, str] = {}
+            with patch("pyperclip.paste", return_value="https://portal.myuniversity.edu/student/dashboard"):
+                res = urls.bookmark_url_from_clipboard("as college portal", aliases, config_path=temp_config)
+                self.assertIn("Bookmarked 'college portal'", res)
+                self.assertIn("college portal", aliases)
+                self.assertEqual(aliases["college portal"], "https://portal.myuniversity.edu/student/dashboard")
+
+                with open(temp_config, "r", encoding="utf-8") as f:
+                    cfg_saved = json.load(f)
+                self.assertIn("college portal", cfg_saved["url_aliases"])
+
+                list_res = urls.list_bookmarks(aliases)
+                self.assertIn("college portal", list_res)
+        finally:
+            if os.path.exists(temp_config):
+                os.remove(temp_config)
+
+    def test_urls_open_url_fuzzy_and_search_fallback(self) -> None:
+        from jarvis.handlers import urls
+        aliases = {"rovan": "https://rovan.in/portal"}
+
+        # Fuzzy match "rowan" -> "rovan"
+        with patch("jarvis.handlers.urls.webbrowser.open") as mock_open:
+            res = urls.open_url("rowan", aliases)
+            mock_open.assert_called_once_with("https://rovan.in/portal")
+            self.assertIn("Opening rovan", res)
+
+        # Fallback to Google search
+        with patch("jarvis.handlers.urls.webbrowser.open") as mock_open:
+            res = urls.open_url("nonexistent_ultra_obscure_site_999", aliases)
+            self.assertIn("searched for it on Google", res)
+            mock_open.assert_called_once()
+            opened_url = mock_open.call_args[0][0]
+            self.assertIn("google.com/search?q=", opened_url)
+
+    def test_router_clipboard_and_bookmark_commands(self) -> None:
+        with patch("jarvis.handlers.urls.open_copied_url", return_value="Opening copied address.") as mock_copied:
+            res = self.router.route("open copied link")
+            self.assertEqual(res, "Opening copied address.")
+            mock_copied.assert_called_once()
+
+            mock_copied.reset_mock()
+            res2 = self.router.route("open link from clipboard")
+            self.assertEqual(res2, "Opening copied address.")
+            mock_copied.assert_called_once()
+
+        with patch("jarvis.handlers.urls.bookmark_url_from_clipboard", return_value="Bookmarked 'moodle'.") as mock_bm:
+            res = self.router.route("bookmark this as moodle")
+            self.assertEqual(res, "Bookmarked 'moodle'.")
+            mock_bm.assert_called_once()
+
+        with patch("jarvis.handlers.urls.list_bookmarks", return_value="You have 3 bookmarks.") as mock_list:
+            res = self.router.route("list bookmarks")
+            self.assertEqual(res, "You have 3 bookmarks.")
+            mock_list.assert_called_once()
+
+    def test_router_url_actions_dispatch(self) -> None:
+        with patch("jarvis.handlers.urls.open_copied_url", return_value="Opening copied link.") as mock_clip, \
+             patch("jarvis.handlers.urls.bookmark_url_from_clipboard", return_value="Bookmarked 'notes'.") as mock_bm, \
+             patch("jarvis.handlers.urls.list_bookmarks", return_value="Listing bookmarks.") as mock_list:
+
+            res_clip = self.router.execute_single_action({"action": "open_copied_url"})
+            self.assertEqual(res_clip, "Opening copied link.")
+            mock_clip.assert_called_once()
+
+            res_bm = self.router.execute_single_action({"action": "bookmark_url", "name": "notes"})
+            self.assertEqual(res_bm, "Bookmarked 'notes'.")
+            mock_bm.assert_called_once()
+
+            res_list = self.router.execute_single_action({"action": "list_bookmarks"})
+            self.assertEqual(res_list, "Listing bookmarks.")
+            mock_list.assert_called_once()
+
+    def test_create_and_open_folder(self) -> None:
+        from jarvis.handlers import files
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            with patch.object(Path, "home", return_value=tmp_path):
+                # 1. Direct handler
+                success, msg, full_path = files.create_folder("the sudo project")
+                self.assertTrue(success)
+                self.assertIn("Created folder 'the sudo project'", msg)
+                self.assertTrue(os.path.isdir(full_path))
+
+                # 2. Router fast path
+                with patch("jarvis.handlers.files.create_folder", return_value=(True, "Created folder 'the sudo project' at /tmp", "/tmp/the sudo project")):
+                    res = self.router.route("create project folder the sudo project")
+                    self.assertIn("Created folder", res)
+
+                with patch("jarvis.handlers.files.open_folder", return_value="Opened folder 'the sudo project'."):
+                    res_open = self.router.route("open folder the sudo project")
+                    self.assertEqual(res_open, "Opened folder 'the sudo project'.")
+
+    def test_gui_desktop_automation(self) -> None:
+        from jarvis.handlers import gui
+        from unittest.mock import MagicMock
+        mock_ag = MagicMock()
+        with patch.object(gui, "pyautogui", mock_ag):
+            # Hotkey
+            res_hk = gui.press_hotkey("ctrl+shift+p")
+            self.assertIn("ctrl+shift+p", res_hk)
+            mock_ag.hotkey.assert_called_once_with("ctrl", "shift", "p")
+
+            # Clipboard actions
+            res_cp = gui.clipboard_action("copy")
+            self.assertEqual(res_cp, "Copied to clipboard.")
+            res_pt = gui.clipboard_action("paste")
+            self.assertEqual(res_pt, "Pasted from clipboard.")
+
+            # Type text
+            res_tt = gui.type_text("git status", press_enter=True)
+            self.assertIn("Typed 'git status'", res_tt)
+            mock_ag.press.assert_called_with("enter")
+
+            # Switch window
+            res_sw = gui.switch_window()
+            self.assertEqual(res_sw, "Switched window.")
+            mock_ag.hotkey.assert_called_with("alt", "tab")
+
+    def test_agentic_multi_action_controller(self) -> None:
+        llm_json = json.dumps({
+            "action": "multi",
+            "commands": [
+                {"action": "create_folder", "name": "the sudo project"},
+                {"action": "open_app", "name": "antigravity"}
+            ],
+            "reply": "Created project folder 'the sudo project' and opened Antigravity IDE, Sir."
+        })
+
+        with patch("jarvis.handlers.files.create_folder", return_value=(True, "Created folder.", r"C:\Desktop\the sudo project")) as mock_mkdir, \
+             patch("jarvis.handlers.apps.open_app", return_value="Opening Antigravity IDE.") as mock_app:
+
+            res = self.router.handle_llm_json_response(llm_json)
+            mock_mkdir.assert_called_once_with("the sudo project", None)
+            mock_app.assert_called_once_with("antigravity", self.router._app_aliases, path=r"C:\Desktop\the sudo project")
+            self.assertEqual(res, "Created project folder 'the sudo project' and opened Antigravity IDE, Sir.")
+
+    def test_compound_action_orchestrator_routing(self) -> None:
+        cfg = dict(self.config)
+        cfg["primary_ai_provider"] = "ollama"
+        cfg["use_ollama"] = True
+        router = CommandRouter(cfg)
+
+        multi_resp = json.dumps({
+            "action": "multi",
+            "commands": [
+                {"action": "create_folder", "name": "the sudo project"},
+                {"action": "open_app", "name": "antigravity ide"}
+            ],
+            "reply": "Created folder 'the sudo project' and launched Antigravity IDE."
+        })
+
+        with patch("jarvis.router.ai.generate_voice_response", return_value=multi_resp) as mock_ai, \
+             patch("jarvis.handlers.files.create_folder", return_value=(True, "Created folder.", r"C:\Desktop\the sudo project")), \
+             patch("jarvis.handlers.apps.open_app", return_value="Opening Antigravity IDE."):
+
+            cmd = "open antigravity ide and create a new project folder, name it as 'the sudo project'"
+            res = router.route(cmd)
+            mock_ai.assert_called_once_with(cmd, cfg)
+            self.assertEqual(res, "Created folder 'the sudo project' and launched Antigravity IDE.")
+
+    def test_build_whistle_keywords(self) -> None:
+        from jarvis.listener import build_whistle_keywords
+        test_cfg = {
+            "app_aliases": {"antigravity": "app.exe", "calc": "calc.exe"},
+            "url_aliases": {"youtube": "https://youtube.com"},
+            "workspaces": {"coding": {}},
+            "whistle_keywords": ["custom_trigger"]
+        }
+        kws = build_whistle_keywords(test_cfg)
+        kws_lower = [k.lower() for k in kws]
+        self.assertIn("antigravity", kws_lower)
+        self.assertIn("calc", kws_lower)
+        self.assertIn("youtube", kws_lower)
+        self.assertIn("coding", kws_lower)
+        self.assertIn("custom_trigger", kws_lower)
+        self.assertIn("jarvis", kws_lower)
+        self.assertIn("volume", kws_lower)
+        self.assertIn("lock", kws_lower)
+
+    def test_normalize_speech_command_whistle_phonetics(self) -> None:
+        from jarvis.router import normalize_speech_command
+        self.assertEqual(normalize_speech_command("hay jarvis"), "hey jarvis")
+        self.assertEqual(normalize_speech_command("said volume to 50 percent"), "set volume to 50 percent")
+        self.assertEqual(normalize_speech_command("loth the workstation"), "lock the workstation")
+        self.assertEqual(normalize_speech_command("what is the weather to day"), "what is the weather today")
+        self.assertEqual(normalize_speech_command("what is my shedule today"), "what is my schedule today")
+        self.assertEqual(normalize_speech_command("volume fifty per cent"), "volume 50 percent")
+        self.assertEqual(normalize_speech_command("open anti gravity id"), "open antigravity")
+        self.assertEqual(normalize_speech_command("open whats app"), "open whatsapp")
+
+    def test_whistle_listener_transcription_logic(self) -> None:
+        from jarvis.listener import Listener
+        import speech_recognition as sr
+        with patch.dict("sys.modules", {"needle": MagicMock()}), patch("needle.Whistle") as mock_whistle_cls:
+            mock_inst = MagicMock()
+            mock_inst.transcribe.return_value = {"text": "Open YouTube.", "ttft_ms": 45.0}
+            mock_whistle_cls.return_value = mock_inst
+
+            # Mock pyaudio so mic thread doesn't try to open hardware stream in test
+            with patch("pyaudio.PyAudio"):
+                listener = Listener(stt_engine="whistle")
+                fake_audio = sr.AudioData(b"\x00" * 3200, 16000, 2)
+                res = listener._transcribe(fake_audio)
+                self.assertEqual(res, "Open YouTube.")
+                mock_inst.transcribe.assert_called_once()
+                listener.close()
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 
 

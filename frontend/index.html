@@ -742,6 +742,34 @@
     box-shadow: 0 0 12px rgba(0, 210, 255, 0.3);
   }
 
+  /* ── Hands-Free Toggle Button Styling ────────────────────────── */
+  .btn-hands-free {
+    background: linear-gradient(135deg, rgba(0, 210, 255, 0.12), rgba(0, 100, 200, 0.22)) !important;
+    border: 1px solid rgba(0, 210, 255, 0.45) !important;
+    color: #67e8f9 !important;
+    gap: 6px;
+    font-weight: 700;
+    transition: all 0.25s ease;
+  }
+  .btn-hands-free:hover {
+    background: linear-gradient(135deg, rgba(0, 210, 255, 0.25), rgba(0, 150, 255, 0.45)) !important;
+    border-color: #00d2ff !important;
+    color: #fff !important;
+    box-shadow: 0 0 14px rgba(0, 210, 255, 0.5) !important;
+    transform: translateY(-1px);
+  }
+  .btn-hands-free.active {
+    background: linear-gradient(135deg, rgba(16, 185, 129, 0.3), rgba(5, 150, 105, 0.55)) !important;
+    border-color: #10b981 !important;
+    color: #a7f3d0 !important;
+    box-shadow: 0 0 16px rgba(16, 185, 129, 0.6) !important;
+    animation: handsFreePulse 2s infinite ease-in-out;
+  }
+  @keyframes handsFreePulse {
+    0%, 100% { box-shadow: 0 0 10px rgba(16, 185, 129, 0.45); }
+    50% { box-shadow: 0 0 22px rgba(16, 185, 129, 0.85); }
+  }
+
   /* ── Stop / Standby Button Styling ────────────────────────── */
   .btn-stop-standby {
     background: linear-gradient(135deg, rgba(239, 68, 68, 0.15), rgba(185, 28, 28, 0.25)) !important;
@@ -822,6 +850,9 @@
     <div style="display: flex; align-items: center; gap: 8px; margin-left: auto;">
       <button class="header-nav-btn" onclick="openDiaryModal()">📖 Diary</button>
       <button class="header-nav-btn" onclick="openFilesModal()">📁 Files</button>
+      <button class="header-nav-btn btn-hands-free" id="btnHandsFree" onclick="toggleHandsFree()" title="Toggle Hands-Free Continuous Mode (Listen without Wake Word)">
+        <span id="handsFreeIcon">🎙️</span> <span id="handsFreeText">Hands-Free: OFF</span>
+      </button>
       <button class="header-nav-btn btn-stop-standby" id="btnHeaderStop" onclick="triggerStandby()" title="Immediately put Jarvis on Standby (Stop listening)">
         <span>⏹</span> Stop / Standby
       </button>
@@ -2225,6 +2256,9 @@ function setupRealtimeSSE() {
           if (payload.type === 'init') {
             if (payload.data && payload.data.state) {
               applyPhase(payload.data.state.phase, payload.data.state.message);
+              if (payload.data.state.hands_free !== undefined) {
+                updateHandsFreeUI(payload.data.state.hands_free);
+              }
             }
             if (payload.data && payload.data.history) {
               _lastHistoryJson = JSON.stringify(payload.data.history);
@@ -2233,8 +2267,15 @@ function setupRealtimeSSE() {
             updateSmartHomeUI();
           } else if (payload.type === 'status') {
             applyPhase(payload.data.phase, payload.data.message);
+            if (payload.data.hands_free !== undefined) {
+              updateHandsFreeUI(payload.data.hands_free);
+            }
             if (hologram && (payload.data.phase === 'listening' || payload.data.phase === 'processing')) {
               hologram.triggerShockwaveBurst(0.6);
+            }
+          } else if (payload.type === 'hands_free') {
+            if (payload.data && payload.data.enabled !== undefined) {
+              updateHandsFreeUI(payload.data.enabled);
             }
           } else if (payload.type === 'devices') {
             updateSmartHomeUI();
@@ -2403,6 +2444,48 @@ function updateSmartHomeUI() {
     .catch(err => console.error("Error fetching devices:", err));
 }
 
+// ── Hands-Free Toggle Handler ──────────────────────────────
+let isHandsFreeActive = false;
+
+function updateHandsFreeUI(enabled) {
+  isHandsFreeActive = !!enabled;
+  const btn = document.getElementById('btnHandsFree');
+  const icon = document.getElementById('handsFreeIcon');
+  const txt = document.getElementById('handsFreeText');
+  if (!btn) return;
+  if (isHandsFreeActive) {
+    btn.classList.add('active');
+    if (icon) icon.textContent = '🟢';
+    if (txt) txt.textContent = 'Hands-Free: ON';
+    btn.title = 'Hands-Free Active: Jarvis stays listening without wake word. Click to turn off.';
+  } else {
+    btn.classList.remove('active');
+    if (icon) icon.textContent = '🎙️';
+    if (txt) txt.textContent = 'Hands-Free: OFF';
+    btn.title = 'Toggle Hands-Free Continuous Mode (Listen without Wake Word)';
+  }
+}
+
+async function toggleHandsFree() {
+  const btn = document.getElementById('btnHandsFree');
+  if (btn) btn.style.opacity = '0.6';
+  try {
+    const res = await fetch('/api/hands_free', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: !isHandsFreeActive })
+    });
+    const data = await res.json();
+    if (data && data.success) {
+      updateHandsFreeUI(data.hands_free);
+    }
+  } catch (err) {
+    console.error('Failed to toggle hands-free:', err);
+  } finally {
+    if (btn) btn.style.opacity = '1';
+  }
+}
+
 // ── Trigger Standby / Stop Handler ──────────────────────────
 async function triggerStandby() {
   const stopBtns = document.querySelectorAll('.btn-stop-standby, .floating-stop-btn');
@@ -2412,6 +2495,7 @@ async function triggerStandby() {
   });
 
   try {
+    updateHandsFreeUI(false);
     const res = await fetch('/api/standby', { method: 'POST' });
     const data = await res.json();
     if (data.success) {

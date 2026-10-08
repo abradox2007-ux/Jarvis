@@ -144,27 +144,38 @@ def main() -> None:
 
                 # ── Phase 4: Continuous Active Listening Loop ────────────
                 should_terminate = False
-                if continuous_conversation:
-                    logger.info("Entering continuous conversation mode (active until 'stop')...")
+                if continuous_conversation or router.is_hands_free():
+                    logger.info("Entering continuous conversation mode...")
                     while True:
                         from server import check_and_clear_standby, is_standby_requested
                         if check_and_clear_standby() or is_standby_requested():
                             logger.info("Standby requested via Web UI.")
                             set_status("idle", 'Standing by. Say "Hey Jarvis" when ready.')
+                            router.set_hands_free(False)
                             break
 
-                        set_status("listening", "Listening... (say 'stop' to standby)")
+                        if router.is_hands_free():
+                            set_status("listening", "Listening... (Hands-Free Active • say 'stop' to standby)")
+                        else:
+                            set_status("listening", "Listening... (say 'stop' to standby)")
+
                         follow_up = listener.capture_command(timeout=LISTEN_TIMEOUT)
 
                         if check_and_clear_standby() or is_standby_requested():
                             logger.info("Standby requested via Web UI during capture.")
                             set_status("idle", 'Standing by. Say "Hey Jarvis" when ready.')
+                            router.set_hands_free(False)
                             break
 
                         if not follow_up:
-                            logger.info("Follow-up timeout (silence). Returning to standby.")
-                            set_status("idle", 'Standing by. Say "Hey Jarvis" when ready.')
-                            break
+                            if router.is_hands_free():
+                                logger.debug("Hands-free active: silence detected, continuing to listen...")
+                                time.sleep(0.1)
+                                continue
+                            else:
+                                logger.info("Follow-up timeout (silence). Returning to standby.")
+                                set_status("idle", 'Standing by. Say "Hey Jarvis" when ready.')
+                                break
 
                         from jarvis.router import is_dismissal, is_termination
                         if is_termination(follow_up):
@@ -174,6 +185,7 @@ def main() -> None:
                             speak(follow_up_res)
                             add_history(follow_up, follow_up_res, ok=True)
                             set_status("idle", "Jarvis is offline.")
+                            router.set_hands_free(False)
                             should_terminate = True
                             break
 
@@ -184,6 +196,7 @@ def main() -> None:
                             speak(follow_up_res)
                             add_history(follow_up, follow_up_res, ok=True)
                             set_status("idle", 'Standing by. Say "Hey Jarvis" when ready.')
+                            router.set_hands_free(False)
                             break
 
                         logger.info("Command received: '%s'", follow_up)

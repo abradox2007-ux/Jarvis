@@ -23,6 +23,7 @@ _state: dict = {
 }
 _history: deque = deque(maxlen=50)   # most-recent 50 commands
 _standby_requested: bool = False
+_hands_free_mode: bool = False
 _subscribers: list[queue.Queue[str]] = []
 
 _devices: dict = {
@@ -46,14 +47,29 @@ def broadcast_event(event_type: str, data: dict) -> None:
 
 # ── Public helpers (called from main.py / router.py / speech.py) ──────────────
 
+def is_hands_free() -> bool:
+    global _hands_free_mode
+    with _lock:
+        return _hands_free_mode
+
+
+def set_hands_free(enabled: bool) -> None:
+    global _hands_free_mode
+    with _lock:
+        _hands_free_mode = enabled
+    broadcast_event("hands_free", {"enabled": enabled})
+
+
 def request_standby() -> None:
-    global _standby_requested
+    global _standby_requested, _hands_free_mode
     with _lock:
         _standby_requested = True
+        _hands_free_mode = False
         _state["phase"] = "waiting"
         _state["message"] = "Standing by. Say \"Hey Jarvis\" when ready."
         _state["updated_at"] = time.time()
-    broadcast_event("status", _state)
+    broadcast_event("status", {**_state, "hands_free": False})
+    broadcast_event("hands_free", {"enabled": False})
 
 
 def is_standby_requested() -> bool:
@@ -121,7 +137,7 @@ def set_status(phase: str, message: str) -> None:
         _state["phase"] = phase
         _state["message"] = message
         _state["updated_at"] = time.time()
-        state_copy = dict(_state)
+        state_copy = {**_state, "hands_free": _hands_free_mode}
     broadcast_event("status", state_copy)
 
 
@@ -154,7 +170,7 @@ def api_events():
             initial_data = json.dumps({
                 "type": "init",
                 "data": {
-                    "state": _state,
+                    "state": {**_state, "hands_free": _hands_free_mode},
                     "devices": _devices,
                     "history": list(_history)
                 },
@@ -191,7 +207,7 @@ def api_events():
 @app.route("/api/status")
 def api_status():
     with _lock:
-        return jsonify({**_state})
+        return jsonify({**_state, "hands_free": _hands_free_mode})
 
 
 @app.route("/api/history")
@@ -243,10 +259,30 @@ def api_post_command():
         return jsonify({"success": False, "response": err_msg}), 500
 
 
+@app.route("/api/hands_free", methods=["GET", "POST"])
+def api_hands_free():
+    if request.method == "POST":
+        data = request.json or {}
+        enabled = data.get("enabled")
+        if enabled is None:
+            enabled = not is_hands_free()
+        else:
+            enabled = bool(enabled)
+        set_hands_free(enabled)
+        router = get_router()
+        if router:
+            router.set_hands_free(enabled)
+        return jsonify({"success": True, "hands_free": enabled})
+    return jsonify({"hands_free": is_hands_free()})
+
+
 @app.route("/api/standby", methods=["POST"])
 @app.route("/api/stop", methods=["POST"])
 def api_standby():
     request_standby()
+    router = get_router()
+    if router:
+        router.set_hands_free(False)
     from jarvis.speech import speak
     try:
         speak("Going on standby. Say Hey Jarvis when you need me.", block=False)
